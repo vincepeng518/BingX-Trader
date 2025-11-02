@@ -23,13 +23,12 @@ exchange = ccxt.bingx({
 })
 
 symbol = 'XAUT/USDT:USDT'
-BASE_UNIT = 0.01
-FEE_RATE = 0.0005          # 0.05%
+BASE_UNIT = 0.001          # 降低 10 倍
+FEE_RATE = 0.0005
 DROP_TRIGGER = 0.003       # 跌 0.3%
 MULTIPLIER = 1.365
-MAX_LEVELS = 6
-PROFIT_THRESHOLD = 0.3     # > 0.3 USDT
-FEE_PENALTY_RATE = 0.001   # 0.1%
+PROFIT_THRESHOLD = 0.3
+FEE_PENALTY_RATE = 0.001
 
 # === 全域狀態 ===
 dashboard_data = {
