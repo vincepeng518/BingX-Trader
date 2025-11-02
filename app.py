@@ -27,6 +27,7 @@ BASE_UNIT = 0.001          # 降低 10 倍
 FEE_RATE = 0.0005
 DROP_TRIGGER = 0.003       # 跌 0.3%
 MULTIPLIER = 1.365
+TOTAL_RISK_USD = 200
 PROFIT_THRESHOLD = 0.3
 FEE_PENALTY_RATE = 0.001
 
@@ -98,14 +99,26 @@ def trading_loop():
 
             # === 逆勢加碼邏輯 ===
             should_add = (
-            size == 0 or 
-            (last_add_price is not None and price < last_add_price * (1 - DROP_TRIGGER))
+                size == 0 or 
+                (last_add_price is not None and price < last_add_price * (1 - DROP_TRIGGER))
             )
 
-            # 移除 MAX_LEVELS 限制
             if should_add:
                 level = dashboard_data['add_count']
                 add_size = BASE_UNIT * (MULTIPLIER ** level)
+        
+                # === 計算「加入這筆後」的總成本 ===
+                current_cost = sum(p * s for p, s in zip(dashboard_data['entry_prices'], dashboard_data['entry_sizes']))
+                new_cost = current_cost + price * add_size  # 新增這筆的成本
+        
+            # === 資金保護：不超過 TOTAL_RISK_USD ===
+            if new_cost > TOTAL_RISK_USD:
+                notify(f"<b>已達資金上限！停止加碼</b>\n"
+                    f"總成本: <code>{new_cost:.2f}</code> > <code>{TOTAL_RISK_USD}</code> USDT")
+                dashboard_data['status'] = f"資金上限 {TOTAL_RISK_USD} USDT"
+                # 不加碼，直接跳過
+            else:
+                # === 正常加碼 ===
                 order = exchange.create_order(
                     symbol, 'market', 'buy', add_size,
                     params={'positionSide': 'LONG'}
@@ -118,9 +131,9 @@ def trading_loop():
                 notify(f"<b>逆勢加碼 第 {dashboard_data['add_count']} 次</b>\n"
                     f"價格: <code>{price:.2f}</code>\n"
                     f"加倉: <code>{add_size:.5f}</code>\n"
+                    f"總成本: <code>{new_cost:.2f}</code> / {TOTAL_RISK_USD} USDT\n"
                     f"訂單: <code>{order['id']}</code>")
                 dashboard_data['trades'].append(f"加碼 {add_size:.5f} @ {price:.2f}")
-
             # === 獲利出場 ===
             if size > 0:
                 total_cost = sum(p * s for p, s in zip(dashboard_data['entry_prices'], dashboard_data['entry_sizes']))
