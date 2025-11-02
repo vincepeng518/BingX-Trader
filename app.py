@@ -27,7 +27,6 @@ BASE_UNIT = 0.001          # 降低 10 倍
 FEE_RATE = 0.0005
 DROP_TRIGGER = 0.003       # 跌 0.3%
 MULTIPLIER = 1.365
-MAX_LEVEL = 20
 PROFIT_THRESHOLD = 0.3
 FEE_PENALTY_RATE = 0.001
 
@@ -97,13 +96,14 @@ def trading_loop():
             size = pos['size']
             entry = pos['entry']
 
-            # === 逆勢加碼 ===
+            # === 逆勢加碼邏輯 ===
             should_add = (
-                size == 0 or 
-                (last_add_price is not None and price < last_add_price * (1 - DROP_TRIGGER))
+            size == 0 or 
+            (last_add_price is not None and price < last_add_price * (1 - DROP_TRIGGER))
             )
 
-            if should_add and dashboard_data['add_count'] < MAX_LEVELS:
+            # 移除 MAX_LEVELS 限制
+            if should_add:
                 level = dashboard_data['add_count']
                 add_size = BASE_UNIT * (MULTIPLIER ** level)
                 order = exchange.create_order(
@@ -116,9 +116,9 @@ def trading_loop():
                 last_add_price = price
 
                 notify(f"<b>逆勢加碼 第 {dashboard_data['add_count']} 次</b>\n"
-                       f"價格: <code>{price:.2f}</code>\n"
-                       f"加倉: <code>{add_size:.5f}</code>\n"
-                       f"訂單: <code>{order['id']}</code>")
+                    f"價格: <code>{price:.2f}</code>\n"
+                    f"加倉: <code>{add_size:.5f}</code>\n"
+                    f"訂單: <code>{order['id']}</code>")
                 dashboard_data['trades'].append(f"加碼 {add_size:.5f} @ {price:.2f}")
 
             # === 獲利出場 ===
