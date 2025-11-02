@@ -1,0 +1,11 @@
+body { font-family: Arial; background: #f0f2f5; margin: 0; padding: 20px; color: #333; }
+.container { max-width: 900px; margin: 0 auto; }
+h1 { text-align: center; color: #1a73e8; }
+.card { background: white; border-radius: 12px; padding: 16px; margin: 12px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.price { font-size: 2.2em; font-weight: bold; color: #34a853; text-align: center; }
+.position { font-size: 1.6em; color: #1a73e8; text-align: center; }
+.pnl { font-size: 1.6em; color: #ea4335; text-align: center; }
+.status { font-size: 1.2em; padding: 8px; background: #e8f5e8; border-radius: 6px; text-align: center; }
+#chart { height: 300px; background: white; border-radius: 8px; padding: 10px; }
+#trades { list-style: none; padding: 0; }
+#trades li { padding: 6px 0; border-bottom: 1px solid #eee; }

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>逆勢加碼 ×1.365 策略儀表板</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .loading { color: #999; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>逆勢加碼 ×1.365 策略</h1>
+
+        <!-- 即時資訊 -->
+        <div class="cards-row">
+            <div class="card">
+                <h2>即時價格</h2>
+                <div id="price" class="price loading">載入中...</div>
+            </div>
+            <div class="card">
+                <h2>持倉量</h2>
+                <div id="long_pos" class="position loading">0</div>
+            </div>
+            <div class="card">
+                <h2>淨盈虧</h2>
+                <div id="pnl" class="pnl loading">0 USDT</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>狀態</h2>
+            <div id="status" class="status loading">載入中...</div>
+        </div>
+
+        <!-- 圖表 -->
+        <div class="card">
+            <h2>價格與盈虧走勢</h2>
+            <canvas id="chart"></canvas>
+        </div>
+
+        <!-- 交易紀錄 -->
+        <div class="card">
+            <h2>交易紀錄 (最新 10 筆)</h2>
+            <ul id="trades" class="loading">載入中...</ul>
+        </div>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('chart').getContext('2d');
+        let chart = null;
+
+        function updateDashboard() {
+            fetch('/api/data')
+                .then(response => response.json())
+                .then(data => {
+                    // === 更新文字 ===
+                    document.getElementById('price').textContent = data.price?.toFixed(2) + ' USDT' || 'N/A';
+                    document.getElementById('long_pos').textContent = data.long_pos?.toFixed(5) || '0';
+                    document.getElementById('pnl').textContent = (data.total_pnl?.toFixed(2) || '0') + ' USDT';
+                    document.getElementById('status').textContent = data.status || '未知';
+
+                    // === 更新交易紀錄 ===
+                    const tradesUl = document.getElementById('trades');
+                    tradesUl.innerHTML = '';
+                    if (data.trades && data.trades.length > 0) {
+                        data.trades.forEach(t => {
+                            const li = document.createElement('li');
+                            li.textContent = t;
+                            tradesUl.appendChild(li);
+                        });
+                    } else {
+                        tradesUl.innerHTML = '<li style="color:#999">無交易紀錄</li>';
+                    }
+
+                    // === 更新圖表 ===
+                    const h = data.history || [];
+                    const labels = h.map(x => new Date(x.time));
+                    const prices = h.map(x => x.price);
+                    const pnls = h.map(x => x.pnl);
+                    const sizes = h.map(x => x.size);
+
+                    if (!chart) {
+                        chart = new Chart(ctx, {
+                            type: 'line',
+                            data: {
+                                labels: labels,
+                                datasets: [
+                                    { label: '價格', data: prices, borderColor: '#4CAF50', yAxisID: 'y' },
+                                    { label: '淨盈虧 (USDT)', data: pnls, borderColor: '#FF9800', yAxisID: 'y1' },
+                                    { label: '持倉量', data: sizes, borderColor: '#2196F3', yAxisID: 'y2', type: 'bar' }
+                                ]
+                            },
+                            options: {
+                                responsive: true,
+                                scales: {
+                                    y: { position: 'left', title: { display: true, text: '價格' } },
+                                    y1: { position: 'right', title: { display: true, text: '淨利' }, grid: { drawOnChartArea: false } },
+                                    y2: { position: 'right', title: { display: true, text: '持倉' }, grid: { drawOnChartArea: false } }
+                                },
+                                plugins: {
+                                    legend: { position: 'top' },
+                                    tooltip: { mode: 'index', intersect: false }
+                                }
+                            }
+                        });
+                    } else {
+                        chart.data.labels = labels;
+                        chart.data.datasets[0].data = prices;
+                        chart.data.datasets[1].data = pnls;
+                        chart.data.datasets[2].data = sizes;
+                        chart.update('quiet');
+                    }
+                })
+                .catch(err => {
+                    console.error('API 錯誤:', err);
+                    document.getElementById('status').textContent = '連線失敗';
+                });
+        }
+
+        // 每 5 秒更新
+        setInterval(updateDashboard, 5000);
+        updateDashboard();  // 立即執行一次
+    </script>
+</body>
+</html>
