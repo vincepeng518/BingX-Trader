@@ -23,7 +23,7 @@ exchange = ccxt.bingx({
 })
 
 symbol = 'XAUT/USDT:USDT'
-BASE_UNIT = 0.002
+BASE_UNIT = 0.5
 FEE_RATE = 0.0005
 DROP_TRIGGER = 0.003
 MULTIPLIER = 1.365
