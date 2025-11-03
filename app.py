@@ -17,13 +17,13 @@ app = Flask(__name__)
 exchange = ccxt.bingx({
     'apiKey': os.getenv('BINGX_API_KEY'),
     'secret': os.getenv('BINGX_SECRET'),
-    'sandbox': True,  # 改 False 為實盤
+    'sandbox': True,   # 開啟模擬盤，無資金限制
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'},
 })
 
 symbol = 'XAUT/USDT:USDT'
-BASE_UNIT = 10          # 調整為 0.002（價值 ≈ 8 USDT，符合最低 5 USDT）
+BASE_UNIT = 0.002
 FEE_RATE = 0.0005
 DROP_TRIGGER = 0.003
 MULTIPLIER = 1.365
