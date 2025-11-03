@@ -23,7 +23,7 @@ exchange = ccxt.bingx({
 })
 
 symbol = 'XAUT/USDT:USDT'
-BASE_UNIT = 1          # 降低 10 倍
+BASE_UNIT = 0.002          # 降低 10 倍
 FEE_RATE = 0.0005
 DROP_TRIGGER = 0.003       # 跌 0.3%
 MULTIPLIER = 1.365
@@ -67,14 +67,15 @@ def get_long_position():
     try:
         positions = exchange.fetch_positions([symbol])
         for pos in positions:
-            if pos['side'] == 'long' and pos['contracts'] > 0:
+            # 關鍵：用 positionSide 判斷
+            if pos.get('positionSide') == 'LONG' and float(pos.get('contracts', 0)) > 0:
                 return {
                     'size': float(pos['contracts']),
-                    'entry': float(pos['entryPrice'])
+                    'entry': float(pos['entryPrice']) if pos['entryPrice'] else 0
                 }
         return {'size': 0, 'entry': 0}
     except Exception as e:
-        notify(f"<b>持倉查詢錯誤</b>\n<code>{e}</code>")
+        print(f"持倉查詢錯誤: {e}")
         return {'size': 0, 'entry': 0}
 
 # === 主策略迴圈（修好版）===
@@ -134,28 +135,31 @@ def trading_loop():
                     f"總成本: <code>{new_cost:.2f}</code> / {TOTAL_RISK_USD} USDT\n"
                     f"訂單: <code>{order['id']}</code>")
                 dashboard_data['trades'].append(f"加碼 {add_size:.5f} @ {price:.2f}")
-            # === 獲利出場 ===
-            if size > 0:
+            # === 動態獲利出場 ===
+            total_held_size = sum(dashboard_data['entry_sizes'])  # 本地持倉
+            if total_held_size > 0:
+                # 用最新價格計算
+                market_value = total_held_size * price
                 total_cost = sum(p * s for p, s in zip(dashboard_data['entry_prices'], dashboard_data['entry_sizes']))
-                market_value = size * price
                 gross_pnl = market_value - total_cost
                 fee_penalty = market_value * FEE_PENALTY_RATE
                 net_pnl = gross_pnl - fee_penalty
 
                 if net_pnl > PROFIT_THRESHOLD:
+                    # === 平倉 ===
                     order = exchange.create_order(
-                        symbol, 'market', 'sell', size,
+                        symbol, 'market', 'sell', total_held_size,
                         params={'positionSide': 'LONG'}
-                    )
+                    )   
                     final_fee = market_value * FEE_RATE
                     final_net = gross_pnl - final_fee
 
                     notify(f"<b>獲利了結全數出場！</b>\n"
-                           f"淨利: <code>{final_net:+.2f}</code> USDT\n"
-                           f"訂單: <code>{order['id']}</code>")
+                        f"淨利: <code>{final_net:+.2f}</code> USDT\n"
+                        f"訂單: <code>{order['id']}</code>")
                     dashboard_data['trades'].append(f"出場 +{final_net:+.2f}")
 
-                    # 重置
+                    # === 重置 ===
                     dashboard_data['add_count'] = 0
                     dashboard_data['entry_prices'] = []
                     dashboard_data['entry_sizes'] = []
