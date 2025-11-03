@@ -41,9 +41,9 @@ dashboard_data = {
     'status': '初始化中...',
     'history': [],
     'trades': [],
-    'add_count': 0,            # 強制初始化！
-    'entry_prices': [],
-    'entry_sizes': []
+    'add_count': 0,              # 強制初始化！
+    'entry_prices': [],          # 強制初始化！
+    'entry_sizes': []            # 強制初始化！
 }
 
 # === Telegram ===
@@ -96,36 +96,47 @@ def trading_loop():
             size = pos['size']
             entry = pos['entry']
 
-            # === 逆勢加碼邏輯（防呆版）===
+            # === 逆勢加碼邏輯（終極防呆版）===
             should_add = (
                 size == 0 or 
-                (last_add_price is not None and price < last_add_price * (1 - DROP_TRIGGER))
+                (last_add_price is not None and price > 0 and price < last_add_price * (1 - DROP_TRIGGER))
             )
 
-            if should_add and price > 0:
-                # 強制初始化
+            if should_add:
+                # === 強制初始化 ===
                 if 'add_count' not in dashboard_data:
                     dashboard_data['add_count'] = 0
-                
+                    dashboard_data['entry_prices'] = []
+                    dashboard_data['entry_sizes'] = []
+
                 level = dashboard_data['add_count']
                 
-                # 防呆：避免 level 太大 → add_size = inf
-                if level > 20:
+                # === 防呆：level 太大 → add_size = inf ===
+                if level > 15:
                     notify("<b>加碼次數過多，停止避免爆倉</b>")
-                    dashboard_data['status'] = "加碼上限"
+                    dashboard_data['status'] = "加碼上限 15 次"
                 else:
-                    add_size = BASE_UNIT * (MULTIPLIER ** level)
-                    
-                    # 防呆：避免 add_size = 0 或 inf
-                    if not (0.0001 <= add_size <= 100):
-                        notify(f"<b>加碼單位異常: {add_size}</b>")
+                    # === 計算 add_size ===
+                    try:
+                        add_size = BASE_UNIT * (MULTIPLIER ** level)
+                    except:
                         add_size = BASE_UNIT  # 強制回歸
-                    
+
+                    # === 防呆：add_size 必須 > 0.001 且 < 100 ===
+                    if not (0.001 <= add_size <= 100):
+                        add_size = BASE_UNIT
+                        notify(f"<b>加碼單位異常，重置為 {BASE_UNIT}</b>")
+
+                    # === 防呆：price 必須 > 0 ===
+                    if price <= 0:
+                        price = 2500.0  # 強制價格（模擬盤用）
+
                     try:
                         order = exchange.create_order(
                             symbol, 'market', 'buy', add_size,
                             params={'positionSide': 'LONG'}
                         )
+                        # === 成功才更新 ===
                         dashboard_data['add_count'] += 1
                         dashboard_data['entry_prices'].append(price)
                         dashboard_data['entry_sizes'].append(add_size)
@@ -133,14 +144,15 @@ def trading_loop():
 
                         notify(f"<b>逆勢加碼 第 {dashboard_data['add_count']} 次</b>\n"
                             f"價格: <code>{price:.2f}</code>\n"
-                            f"加倉: <code>{add_size:.5f}</code>\n"
+                            f"加倉: <code>{add_size:.6f}</code>\n"
                             f"訂單: <code>{order['id']}</code>")
-                        dashboard_data['trades'].append(f"加碼 {add_size:.5f} @ {price:.2f}")
+                        dashboard_data['trades'].append(f"加碼 {add_size:.6f} @ {price:.2f}")
 
                     except Exception as e:
                         error_msg = f"加碼失敗: {e}"
                         print(error_msg)
                         notify(f"<b>加碼失敗</b>\n<code>{e}</code>")
+                        dashboard_data['status'] = f"加碼錯誤: {e}"
             
             # === 動態獲利出場 ===
             total_held_size = sum(dashboard_data['entry_sizes'])  # 本地持倉
