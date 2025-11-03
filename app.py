@@ -23,9 +23,9 @@ exchange = ccxt.bingx({
 })
 
 symbol = 'XAUT/USDT:USDT'
-BASE_UNIT = 1          # 降低 10 倍
+BASE_UNIT = 0.002          # 調整為 0.002（價值 ≈ 8 USDT，符合最低 5 USDT）
 FEE_RATE = 0.0005
-DROP_TRIGGER = 0.003       # 跌 0.3%
+DROP_TRIGGER = 0.003
 MULTIPLIER = 1.365
 PROFIT_THRESHOLD = 0.3
 FEE_PENALTY_RATE = 0.001
