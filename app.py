@@ -38,13 +38,12 @@ dashboard_data = {
     'total_cost': 0,
     'total_value': 0,
     'total_pnl': 0,
-    'status': '監控中',
-    'history': deque(maxlen=300),
+    'status': '初始化中...',
+    'history': [],
     'trades': [],
-    'add_count': 0,
+    'add_count': 0,            # 強制初始化！
     'entry_prices': [],
-    'entry_sizes': [],
-    'last_add_price': None
+    'entry_sizes': []
 }
 
 # === Telegram ===
@@ -97,42 +96,56 @@ def trading_loop():
             size = pos['size']
             entry = pos['entry']
 
-            # === 逆勢加碼邏輯 ===
+            # === 逆勢加碼邏輯（防呆版）===
             should_add = (
                 size == 0 or 
                 (last_add_price is not None and price < last_add_price * (1 - DROP_TRIGGER))
             )
 
-            if should_add:
-                level = dashboard_data['add_count']
-                add_size = BASE_UNIT * (MULTIPLIER ** level)
-        
-                # === 計算「加入這筆後」的總成本 ===
-                current_cost = sum(p * s for p, s in zip(dashboard_data['entry_prices'], dashboard_data['entry_sizes']))
-                new_cost = current_cost + price * add_size  # 新增這筆的成本
-        
-            if should_add:
-                level = dashboard_data['add_count']
-                add_size = BASE_UNIT * (MULTIPLIER ** level)
+            if should_add and price > 0:
+                # 強制初始化
+                if 'add_count' not in dashboard_data:
+                    dashboard_data['add_count'] = 0
                 
-                # === 直接下單，無資金限制 ===
-                order = exchange.create_order(
-                    symbol, 'market', 'buy', add_size,
-                    params={'positionSide': 'LONG'}
-                )
-                dashboard_data['add_count'] += 1
-                dashboard_data['entry_prices'].append(price)
-                dashboard_data['entry_sizes'].append(add_size)
-                last_add_price = price
+                level = dashboard_data['add_count']
+                
+                # 防呆：避免 level 太大 → add_size = inf
+                if level > 20:
+                    notify("<b>加碼次數過多，停止避免爆倉</b>")
+                    dashboard_data['status'] = "加碼上限"
+                else:
+                    add_size = BASE_UNIT * (MULTIPLIER ** level)
+                    
+                    # 防呆：避免 add_size = 0 或 inf
+                    if not (0.0001 <= add_size <= 100):
+                        notify(f"<b>加碼單位異常: {add_size}</b>")
+                        add_size = BASE_UNIT  # 強制回歸
+                    
+                    try:
+                        order = exchange.create_order(
+                            symbol, 'market', 'buy', add_size,
+                            params={'positionSide': 'LONG'}
+                        )
+                        dashboard_data['add_count'] += 1
+                        dashboard_data['entry_prices'].append(price)
+                        dashboard_data['entry_sizes'].append(add_size)
+                        last_add_price = price
 
-                notify(f"<b>逆勢加碼 第 {dashboard_data['add_count']} 次</b>\n"
-                    f"價格: <code>{price:.2f}</code>\n"
-                    f"加倉: <code>{add_size:.5f}</code>\n"
-                    f"訂單: <code>{order['id']}</code>")
-                dashboard_data['trades'].append(f"加碼 {add_size:.5f} @ {price:.2f}")
+                        notify(f"<b>逆勢加碼 第 {dashboard_data['add_count']} 次</b>\n"
+                            f"價格: <code>{price:.2f}</code>\n"
+                            f"加倉: <code>{add_size:.5f}</code>\n"
+                            f"訂單: <code>{order['id']}</code>")
+                        dashboard_data['trades'].append(f"加碼 {add_size:.5f} @ {price:.2f}")
+
+                    except Exception as e:
+                        error_msg = f"加碼失敗: {e}"
+                        print(error_msg)
+                        notify(f"<b>加碼失敗</b>\n<code>{e}</code>")
+            
             # === 動態獲利出場 ===
             total_held_size = sum(dashboard_data['entry_sizes'])  # 本地持倉
             if total_held_size > 0:
+                
                 # 用最新價格計算
                 market_value = total_held_size * price
                 total_cost = sum(p * s for p, s in zip(dashboard_data['entry_prices'], dashboard_data['entry_sizes']))
