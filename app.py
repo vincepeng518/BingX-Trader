@@ -29,7 +29,7 @@ SHORT_BASE    = 0.0005
 SHORT_MULT    = 1.33
 SHORT_GRID1   = 0.0005
 SHORT_GRID2   = 0.0010
-SHORT_PROFIT  = atura0.05
+SHORT_PROFIT  = 0.05
 
 # ==================== 狀態 ====================
 state = {
@@ -104,7 +104,7 @@ def short_add():
     notify(f"🔴 <b>空單加碼 第{len(state['short_entries'])}筆</b>\n{q:.6f} 張 @ {state['price']:.2f}")
 
 def short_close():
-    if state['short_size'] == ord0: return
+    if state['short_size'] == 0: return
     exchange.create_market_buy_order(symbol, state['short_size'], params={'positionSide': 'SHORT'})
     pnl = (sum(e['price']*e['size'] for e in state['short_entries'])/state['short_size'] - state['price']) * state['short_size']
     notify(f"🔴 <b>空單全平！獲利 {pnl:+.2f} USDT</b>")
