@@ -67,7 +67,61 @@ def notify(msg):
     send_tg(msg)
 
 # ==================== 交易核心（不變）===================
-# （這裡放你原本的 sync_positions, calc_pnl, add_long, close_all 等函數，保持不變）
+def sync_positions():
+    try:
+        size, entry = 0.0, 0.0
+        if exchange:
+            pos = exchange.fetch_positions([symbol])
+            for p in pos:
+                if p['contracts'] > 0 and p['side'] == 'long':
+                    size = float(p['contracts'])
+                    entry = float(p['entryPrice'] or 0)
+        state['long_size'] = size
+        state['long_entry'] = entry
+        if size > 0 and not state['entries']:
+            state['entries'] = [{'price': entry, 'size': size}]
+            notify(f"同步持倉 {size:.6f} @ {entry:.2f}")
+    except Exception as e:
+        print(f"同步失敗: {e}")
+
+# ==================== 核心 ====================
+def calc_pnl():
+    if not state['entries']: return 0.0
+    cost = sum(e['price'] * e['size'] for e in state['entries'])
+    value = sum(e['size'] for e in state['entries']) * state['price']
+    return value - cost - value*0.0005*2
+
+def should_exit():
+    if not state['entries']: return False
+    return calc_pnl() >= PROFIT_PER_GRID * len(state['entries'])
+
+def add_long(size):
+    if not TRADING_ENABLED: return
+    qty = fmt_qty(size)
+    if qty <= 0: return
+    try:
+        if exchange:
+            exchange.create_market_buy_order(symbol, qty, params={'positionSide': 'LONG'})
+        state['entries'].append({'price': state['price'], 'size': qty})
+        state['trades'].append(f"加倉 {qty:.6f} @ {state['price']:.2f}")
+        notify(f"<b>加倉成功 第{len(state['entries'])}筆</b>\n{qty:.6f} 張")
+        sync_positions()
+    except Exception as e:
+        notify(f"<b>加倉失敗</b>\n{e}")
+
+def close_all():
+    size = state['long_size']
+    if size == 0: return
+    try:
+        if exchange:
+            exchange.create_market_sell_order(symbol, fmt_qty(size), params={'positionSide': 'LONG'})
+        pnl = calc_pnl()
+        notify(f"<b>全平成功！淨利 {pnl:+.2f} USDT</b>")
+        state['trades'].append(f"全平 +{pnl:+.2f}")
+        state['entries'].clear()
+        sync_positions()
+    except Exception as e:
+        notify(f"<b>平倉失敗</b>\n{e}")
 
 # ==================== 每日自動優化引擎 ====================
 def auto_optimize_parameters():
@@ -180,12 +234,14 @@ def trading_loop():
             state['price'] = ticker['last']
             sync_positions()
 
+                        # 首倉
             if first and state['long_size'] == 0:
                 add_long(BASE_SIZE)
-                last_grid_price = state['price']
+                last_grid_price = state['price']      # ←←← 這行決定之後能不能加倉！
                 peak_price = state['price']
-                alert_sent = False
+                notify(f"<b>首倉已開！</b> 價格 {state['price']:.2f}")
                 first = False
+                time.sleep(3)
                 continue
 
             if state['long_size'] > 0 and should_exit():
@@ -193,12 +249,19 @@ def trading_loop():
                 last_grid_price = None
                 continue
 
-            if state['long_size'] > 0 and last_grid_price:
+            if state['long_size'] > 0 and last_grid_price is not None:
                 grid = GRID_PCT_1 if len(state['entries']) < 12 else GRID_PCT_2
                 if state['price'] <= last_grid_price * (1 - grid):
                     size = BASE_SIZE * (MULTIPLIER ** len(state['entries']))
                     add_long(size)
-                    last_grid_price = state['price']
+                    last_grid_price = state['price']   # 關鍵更新！
+                    
+                    # 發通知讓你看到它真的在加
+                    notify(f"<b>逆勢加碼成功！</b>\n"
+                           f"第 {len(state['entries'])} 筆\n"
+                           f"手數: <code>{next_size:.6f}</code>\n"
+                           f"價格: <code>{state['price']:.2f}</code>\n"
+                           f"觸發條件: 跌幅 ≥ {current_grid_pct*10000:.1f} 點")
 
             if state['price'] > peak_price:
                 peak_price = state['price']
