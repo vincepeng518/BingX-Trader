@@ -55,8 +55,13 @@ def fmt_qty(q):   return max(MIN_QTY, round(q / LOT_SIZE) * LOT_SIZE)
 
 # ==================== 全域狀態 ====================
 state = {
-    'price': 0.0, 'long_size': 0.0, 'long_entry': 0.0,
-    'entries': [], 'status': '初始化中...', 'trades': [], 'total_pnl': 0.0
+    'price': 0.0,
+    'long_size': 0.0,
+    'long_entry': 0.0,
+    'entries': [],
+    'status': '初始化中...',
+    'trades': [],           # 這一行一定要有！
+    'total_pnl': 0.0
 }
 TRADING_ENABLED = True
 peak_price = 0.0
@@ -139,7 +144,6 @@ def close_all():
         notify(f"<b>平倉失敗</b>\n{e}")
 
 # ==================== Telegram 控制 ====================
-# ==================== Telegram 超穩版（加手動觸發 + log 備份） ====================
 async def status_cmd(update, context):
     sync_positions()
     pnl = calc_pnl()

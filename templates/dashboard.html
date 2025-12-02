@@ -2,66 +2,71 @@
 <html>
 <head>
     <title>BingX XAUT 馬丁機器人</title>
-    <meta http-equiv="refresh" content="5">
-    <style>body {font-family: Arial; padding: 20px; background: #000; color: #0f0;} button {background: #0f0; color: #000; padding: 10px; border: none; cursor: pointer;}</style>
+    <meta charset="utf-8">
+    <meta http-equiv="refresh" content="6">
+    <style>
+        body {font-family: Consolas, monospace; background:#000; color:#0f0; padding:20px;}
+        button {background:#0f0; color:#000; padding:10px 20px; margin:5px; border:none; cursor:pointer; font-weight:bold;}
+        table {border-collapse: collapse; width: 100%; margin-top: 10px;}
+        th, td {border: 1px solid #0f0; padding: 8px; text-align: left;}
+        th {background: #003300;}
+    </style>
 </head>
 <body>
-    <h1>XAUT/USDT 強化馬丁格爾</h1>
-    <h2 id="status">載入中...</h2>
-    <p>目前價格: <span id="price">-</span></p>
-    <p>持倉數量: <span id="size">-</span> (共 <span id="count">0</span> 筆)</p>
-    <p>總盈虧: <span id="pnl">-</span> USDT</p>
-    <hr>
-    <h3>最近交易</h3>
-    <ul id="trades"></ul>
+    <h1>XAUT/USDT 強化馬丁格爾機器人</h1>
     
-    <!-- 新增：手動觸發 /status 按鈕 -->
+    <h2>即時狀態</h2>
+    <p>金價：<span id="price">載入中...</span></p>
+    <p>持倉：<span id="size">-</span> 張（共 <span id="count">0</span> 筆）</p>
+    <p>浮動盈虧：<span id="pnl">-</span> USDT</p>
+    <p>機器人：<span id="stat">載入中...</span></p>
+
     <hr>
-    <h3>Telegram 控制（點擊觸發）</h3>
-    <button onclick="manualStatus()">發送 /status 到 TG</button>
-    <button onclick="manualPause()">/pause 暫停</button>
-    <button onclick="manualResume()">/resume 恢復</button>
-    <button onclick="manualClose()">/close 全平</button>
+    <h2>Telegram 手動控制（點即發）</h2>
+    <button onclick="cmd('status')">發送 /status</button>
+    <button onclick="cmd('pause')">暫停交易</button>
+    <button onclick="cmd('resume')">恢復交易</button>
+    <button onclick="cmd('close')">強制全平</button>
+
+    <hr>
+    <h2>最近 15 筆交易紀錄</h2>
+    <table>
+        <thead><tr><th>時間</th><th>動作</th></tr></thead>
+        <tbody id="trades"></tbody>
+    </table>
 
     <script>
-        function update() {
-            fetch('/api/data').then(r => r.json()).then(d => {
-                document.getElementById('status').innerText = d.status;
-                document.getElementById('price').innerText = d.price.toFixed(2);
-                document.getElementById('size').innerText = d.long_size.toFixed(6);
-                document.getElementById('count').innerText = d.entries.length;
-                document.getElementById('pnl').innerText = d.total_pnl.toFixed(2);
+        function cmd(action) {
+            fetch(`/tg/${action}`);
+            alert('已執行 /' + action);
+        }
 
-                let list = document.getElementById('trades');
-                list.innerHTML = '';
-                d.trades.slice(-10).reverse().forEach(t => {
-                    let li = document.createElement('li');
-                    li.innerText = t;
-                    list.appendChild(li);
-                });
-            });
+        function update() {
+            fetch('/api/data')
+                .then(r => r.json())
+                .then(d => {
+                    document.getElementById('price').innerText = Number(d.price).toFixed(2);
+                    document.getElementById('size').innerText = Number(d.long_size).toFixed(6);
+                    document.getElementById('count').innerText = d.entries.length;
+                    document.getElementById('pnl').innerText = Number(d.total_pnl).toFixed(2);
+                    document.getElementById('stat').innerText = d.status;
+
+                    let tb = document.getElementById('trades');
+                    tb.innerHTML = '';
+                    // 確保 trades 是陣列（很重要！）
+                    (d.trades || []).slice(-15).reverse().forEach(t => {
+                        let tr = document.createElement('tr');
+                        let now = new Date().toLocaleTimeString('zh-TW');
+                        tr.innerHTML = `<td>${now}</td><td>${t}</td>`;
+                        tb.appendChild(tr);
+                    });
+                })
+                .catch(e => console.log("API 錯誤", e));
         }
-        
-        // 手動觸發 Telegram 指令（呼叫後端 API）
-        async function manualStatus() {
-            await fetch('/tg/status');
-            alert('已發 /status 到 Telegram！（檢查 log 如無 TG）');
-        }
-        async function manualPause() {
-            await fetch('/tg/pause');
-            alert('已暫停交易');
-        }
-        async function manualResume() {
-            await fetch('/tg/resume');
-            alert('已恢復交易');
-        }
-        async function manualClose() {
-            await fetch('/tg/close');
-            alert('強制全平執行中...');
-        }
-        
-        setInterval(update, 5000);
+
+        setInterval(update, 6000);
         update();
+    update();
     </script>
 </body>
 </html>
