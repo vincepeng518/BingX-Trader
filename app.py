@@ -244,85 +244,80 @@ import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# 全域交易開關（True = 允許交易，False = 完全暫停加倉與出場）
 TRADING_ENABLED = True
+peak_price = 0.0
+alert_sent = False
+last_grid_price = None
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "<b>BingX XAUT 馬丁機器人控制面板</b>\n\n"
-        "指令列表：\n"
-        "/status  - 查目前狀態\n"
-        "/pause   - 暫停所有交易\n"
-        "/resume  - 恢復交易\n"
-        "/forceclose - 強制市價全平倉位",
-        parse_mode='HTML')
+async def tg_notify(msg):
+    if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+        try:
+            bot = Bot(token=TELEGRAM_TOKEN)
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode='HTML')
+        except:
+            pass
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pnl = calc_pnl()
-    entries = state['entries']
-    
-    if not entries:
-        msg = "<b>目前無持倉，等待首倉進場</b>"
-    else:
-        # 每筆持倉明細
-        lines = []
-        total_size = 0.0
-        total_cost = 0.0
-        for i, e in enumerate(entries, 1):
-            size = e['size']
-            price = e['price']
-            value = size * price
-            total_size += size
-            total_cost += value
-            lines.append(
-                f"{i:>2}｜{size:>.6f} 張｜{price:>8.2f}｜價值 {value:>7.2f}＄"
-            )
-        
-        avg_price = total_cost / total_size if total_size > 0 else 0
-        
-        msg = f"<b>目前持倉明細（共 {len(entries)} 筆）</b>\n\n"
-        msg += "\n".join(lines)
-        msg += f"\n\n"
-        msg += f"總手數　　：<code>{total_size:.6f}</code> 張\n"
-        msg += f"平均成本　：<code>{avg_price:.2f}</code>\n"
-        msg += f"最新價格　：<code>{state['price']:.2f}</code>\n"
-        msg += f"浮動盈虧　：<code>{pnl:+.2f}</code> USDT\n"
-        msg += f"交易狀態　　：{'<b>運行中</b>' if TRADING_ENABLED else '<b>已暫停</b>'}"
+def notify(msg):
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}")
+    asyncio.run(tg_notify(msg))
 
-    await update.message.reply_text(msg, parse_mode='HTML')
-
-async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global TRADING_ENABLED
-    TRADING_ENABLED = False
-    await update.message.reply_text("交易已暫停，加倉與自動出場全部停止")
-
-async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global TRADING_ENABLED 
-    TRADING_ENABLED = False
-    await update.message.reply_text("交易已恢復，機器人繼續吃波動")
-
-async def forceclose(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("正在強制市價全平，請稍等...")
-    close_all()
-    await update.message.reply_text("已強制全平倉位平掉！")
-
-# 啟動 Telegram 指令監聽（背景執行，不卡主程式）
+# 強制啟動 Telegram 指令監聽
 def start_telegram_bot():
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("未設定 Telegram Token，指令控制功能關閉")
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token:
+        print("Warning: 未設定 TELEGRAM_TOKEN，指令功能關閉（通知還是會發）")
         return
 
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("pause", pause))
-    app.add_handler(CommandHandler("resume", resume))
-    app.add_handler(CommandHandler("forceclose", forceclose))
+    async def status_cmd(update, context):
+        pnl = calc_pnl()
+        entries = state['entries']
+        if not entries:
+            text = "<b>目前無持倉，等待首倉進場</b>"
+        else:
+            lines = [f"<b>持倉明細（{len(entries)} 筆）</b>"]
+            total_size = total_cost = 0
+            for i, e in enumerate(entries, 1):
+                sz = e['size']
+                pr = e['price']
+                val = sz * pr
+                total_size += sz
+                total_cost += val
+                lines.append(f"{i:>2} │ {sz:.6f} │ {pr:>8.2f} │ ${val:>6.2f}")
+            avg = total_cost / total_size
+            lines += ["", 
+                     f"總手數　　: <code>{total_size:.6f}</code> 張",
+                     f"平均成本　: <code>{avg:.2f}</code>",
+                     f"最新價格　: <code>{state['price']:.2f}</code>",
+                     f"浮動盈虧　: <code>{pnl:+.2f}</code> USDT",
+                     f"狀態　　　: {'<b>運行中</b>' if TRADING_ENABLED else '<b>已暫停</b>'}"]
+            text = "\n".join(lines)
+        await update.message.reply_text(text, parse_mode='HTML')
 
-    print("Telegram 遠端控制已啟動！")
+    async def pause_cmd(update, context):
+        global TRADING_ENABLED
+        TRADING_ENABLED = False
+        await update.message.reply_text("已暫停交易（加倉與自動出場停止）")
+
+    async def resume_cmd(update, context):
+        global TRADING_ENABLED
+        TRADING_ENABLED = True
+        await update.message.reply_text("已恢復交易，繼續吃肉！")
+
+    async def forceclose_cmd(update, context):
+        await update.message.reply_text("正在強制市價全平…")
+        close_all()
+        await update.message.reply_text("已強制全平！")
+
+    app = Application.builder().token(token).build()
+    app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("pause", pause_cmd))
+    app.add_handler(CommandHandler("resume", resume_cmd))
+    app.add_handler(CommandHandler("forceclose", forceclose_cmd))
+
+    print("Telegram 指令監聽已啟動！輸入 /status 測試")
     app.run_polling(drop_pending_updates=True)
 
-# 在最下面啟動（和 Flask 一起跑）
+# 啟動（一定要放最下面）
 threading.Thread(target=start_telegram_bot, daemon=True).start()
 
 # ==================== 啟動 ====================
