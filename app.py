@@ -139,57 +139,74 @@ def close_all():
         notify(f"<b>平倉失敗</b>\n{e}")
 
 # ==================== Telegram 控制 ====================
+# ==================== Telegram 超穩版（加手動觸發 + log 備份） ====================
 async def status_cmd(update, context):
     sync_positions()
     pnl = calc_pnl()
     e = state['entries']
     if not e:
-        text = "<b>無持倉</b>\n等待首倉進場"
+        text = f"<b>🚫 無持倉</b>\n金價: {state['price']:.2f}\n狀態: {'🟢運行中' if TRADING_ENABLED else '🔴已暫停'}"
     else:
-        lines = [f"<b>持倉明細（{len(e)}筆）</b>"]
-        total = 0.0
+        lines = [f"<b>📊 持倉明細（{len(e)}筆，從 BingX 同步）</b>"]
+        total_size = total_cost = 0.0
         for i, x in enumerate(e, 1):
             val = x['size'] * x['price']
-            total += val
-            lines.append(f"{i:>2} │ {x['size']:.6f} │ {x['price']:>7.2f} │ ${val:>6.2f}")
-        avg = total / state['long_size'] if state['long_size']>0 else 0
-        lines += ["", f"總手數: <code>{state['long_size']:.6f}</code>",
-                  f"平均成本: <code>{avg:.2f}</code>",
-                  f"最新價格: <code>{state['price']:.2f}</code>",
-                  f"盈虧: <code>{pnl:+.2f}</code> USDT",
-                  f"狀態: {'運行中' if TRADING_ENABLED else '已暫停'}"]
+            total_size += x['size']
+            total_cost += val
+            lines.append(f"{i:>2} │ {x['size']:>7.6f} │ {x['price']:>7.2f} │ 價值 {val:>6.2f}＄")
+        avg = total_cost / total_size if total_size > 0 else 0
+        lines += [
+            "",
+            f"📈 <b>總結</b>",
+            f"總手數　　: <code>{total_size:.6f}</code> 張",
+            f"平均成本　: <code>{avg:.2f}</code> USDT",
+            f"最新價格　: <code>{state['price']:.2f}</code> USDT",
+            f"浮動盈虧　: <code>{pnl:+.2f}</code> USDT",
+            f"狀態　　　: {'🟢 運行中' if TRADING_ENABLED else '🔴 已暫停'}",
+            f"波段高點　: <code>{peak_price:.2f}</code> (回撤 {((peak_price - state['price'])/peak_price *100):+.2f}%)"
+        ]
         text = "\n".join(lines)
-    await update.message.reply_text(text, parse_mode='HTML')
+    
+    # 發到 Telegram + 印 log 備份
+    if update:
+        await update.message.reply_text(text, parse_mode='HTML')
+    else:
+        print(f"手動 /status 結果:\n{text}")  # log 備份
+    notify(f"Status 更新: {pnl:+.2f} USDT | {len(e)} 筆持倉")  # 總結通知
 
 async def pause_cmd(update, context):
     global TRADING_ENABLED
     TRADING_ENABLED = False
-    await update.message.reply_text("交易已暫停")
+    await update.message.reply_text("🔴 交易已暫停（加倉/出場停止）")
 
 async def resume_cmd(update, context):
     global TRADING_ENABLED
     TRADING_ENABLED = True
-    await update.message.reply_text("交易已恢復")
+    await update.message.reply_text("🟢 交易已恢復！繼續吃波動")
 
 async def close_cmd(update, context):
-    await update.message.reply_text("強制全平執行中...")
+    await update.message.reply_text("⚡ 強制全平中...")
     close_all()
-    await update.message.reply_text("已全平！")
+    await update.message.reply_text("✅ 全平完成！持倉清零")
 
 def start_tg_bot():
     if not TELEGRAM_TOKEN:
-        print("未設定 TELEGRAM_TOKEN，指令功能關閉")
+        print("⚠️ 未填 TELEGRAM_TOKEN，指令只在 log 顯示（用儀表板手動觸發）")
         return
+    
     try:
-        app = Application.builder().token(TELEGRAM_TOKEN).build()
-        app.add_handler(CommandHandler("status", status_cmd))
-        app.add_handler(CommandHandler("pause", pause_cmd))
-        app.add_handler(CommandHandler("resume", resume_cmd))
-        app.add_handler(CommandHandler("close", close_cmd))
-        print("Telegram Bot 啟動成功！")
-        app.run_polling(drop_pending_updates=True)
+        application = Application.builder().token(TELEGRAM_TOKEN).build()
+        application.add_handler(CommandHandler("status", status_cmd))
+        application.add_handler(CommandHandler("pause", pause_cmd))
+        application.add_handler(CommandHandler("resume", resume_cmd))
+        application.add_handler(CommandHandler("close", close_cmd))
+        print("✅ Telegram Bot 監聽啟動！（私聊機器人打 /status）")
+        # 背景執行，不阻塞主程式
+        threading.Thread(target=lambda: asyncio.run(application.run_polling(drop_pending_updates=True)), daemon=True).start()
     except Exception as e:
-        print(f"Telegram Bot 啟動失敗: {e}")
+        print(f"❌ Telegram 啟動失敗: {e} - 檢查 token 格式")
+        # 備份：手動觸發 status
+        asyncio.run(status_cmd(None, None))
 
 # ==================== 主迴圈 ====================
 def trading_loop():
@@ -256,6 +273,31 @@ def home():
 def api():
     sync_positions()
     return jsonify(state)
+
+# 加到 @app.route 下面
+@app.route('/tg/status')
+def tg_status():
+    asyncio.run(status_cmd(None, None))  # 手動觸發，無 update 就印 log
+    return "Status sent to TG/log"
+
+@app.route('/tg/pause')
+def tg_pause():
+    global TRADING_ENABLED
+    TRADING_ENABLED = False
+    notify("手動暫停交易")
+    return "Paused"
+
+@app.route('/tg/resume')
+def tg_resume():
+    global TRADING_ENABLED
+    TRADING_ENABLED = True
+    notify("手動恢復交易")
+    return "Resumed"
+
+@app.route('/tg/close')
+def tg_close():
+    close_all()
+    return "Closed"
 
 # ==================== 啟動 ====================
 if __name__ == '__main__':

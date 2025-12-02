@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>XAUT 強化馬丁</title>
+    <title>BingX XAUT 馬丁機器人</title>
     <meta http-equiv="refresh" content="5">
-    <style>body {font-family: Arial; padding: 20px; background: #000; color: #0f0;}</style>
+    <style>body {font-family: Arial; padding: 20px; background: #000; color: #0f0;} button {background: #0f0; color: #000; padding: 10px; border: none; cursor: pointer;}</style>
 </head>
 <body>
     <h1>XAUT/USDT 強化馬丁格爾</h1>
@@ -14,13 +14,21 @@
     <hr>
     <h3>最近交易</h3>
     <ul id="trades"></ul>
+    
+    <!-- 新增：手動觸發 /status 按鈕 -->
+    <hr>
+    <h3>Telegram 控制（點擊觸發）</h3>
+    <button onclick="manualStatus()">發送 /status 到 TG</button>
+    <button onclick="manualPause()">/pause 暫停</button>
+    <button onclick="manualResume()">/resume 恢復</button>
+    <button onclick="manualClose()">/close 全平</button>
 
     <script>
         function update() {
             fetch('/api/data').then(r => r.json()).then(d => {
                 document.getElementById('status').innerText = d.status;
                 document.getElementById('price').innerText = d.price.toFixed(2);
-                document.getElementById('size').innerText = d.long_size.toFixed(4);
+                document.getElementById('size').innerText = d.long_size.toFixed(6);
                 document.getElementById('count').innerText = d.entries.length;
                 document.getElementById('pnl').innerText = d.total_pnl.toFixed(2);
 
@@ -33,6 +41,25 @@
                 });
             });
         }
+        
+        // 手動觸發 Telegram 指令（呼叫後端 API）
+        async function manualStatus() {
+            await fetch('/tg/status');
+            alert('已發 /status 到 Telegram！（檢查 log 如無 TG）');
+        }
+        async function manualPause() {
+            await fetch('/tg/pause');
+            alert('已暫停交易');
+        }
+        async function manualResume() {
+            await fetch('/tg/resume');
+            alert('已恢復交易');
+        }
+        async function manualClose() {
+            await fetch('/tg/close');
+            alert('強制全平執行中...');
+        }
+        
         setInterval(update, 5000);
         update();
     </script>
