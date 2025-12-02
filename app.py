@@ -148,18 +148,19 @@ async def status_cmd(update, context):
     sync_positions()
     pnl = calc_pnl()
     e = state['entries']
-    
-    # 防止 peak_price 為 0 除以零
-    drawdown = 0.0
-    if peak_price > 0 and state['price'] > 0:
-        drawdown = (peak_price - state['price']) / peak_price * 100
 
-    if not e or state['long_size'] == 0:
+    # 防除以零 + 更安全的回撤計算
+    if peak_price > 100:  # 正常金價不可能低於 100
+        drawdown = (peak_price - state['price']) / peak_price * 100
+    else:
+        drawdown = 0.0
+
+    if not e or state['long_size'] <= 0:
         text = (
-            "<b>無持倉</b>\n"
+            "<b>目前無持倉</b>\n"
             f"最新金價：<code>{state['price']:.2f}</code> USDT\n"
-            f"狀態：<code>{'運行中' if TRADING_ENABLED else '已暫停'}</code>\n"
-            f"波段高點：<code>{peak_price:.2f}</code>"
+            f"波段高點：<code>{peak_price:.2f}</code> USDT\n"
+            f"狀態：<code>{'運行中' if TRADING_ENABLED else '已暫停'}</code>"
         )
     else:
         lines = [f"<b>持倉明細（{len(e)} 筆）</b>"]
@@ -169,20 +170,20 @@ async def status_cmd(update, context):
             total_size += x['size']
             total_cost += val
             lines.append(f"{i:>2} │ {x['size']:>8.6f} │ {x['price']:>7.2f} │ ${val:>7.2f}")
-        
+
         avg = total_cost / total_size if total_size > 0 else 0
-        
+
         lines += [
             "",
-            "總手數　　: <code>{:.6f}</code> 張".format(total_size),
-            "平均成本　: <code>{:.2f}</code> USDT".format(avg),
-            "最新價格　: <code>{:.2f}</code> USDT".format(state['price']),
-            "浮動盈虧　: <code>{:+.2f}</code> USDT".format(pnl),
-            "狀態　　　: {}".format('運行中' if TRADING_ENABLED else '已暫停'),
-            "波段高點　: <code>{:.2f}</code> (回撤 <code>{:+.2f}%</code>)".format(peak_price, drawdown)
+            f"總手數　　: <code>{total_size:.6f}</code> 張",
+            f"平均成本　: <code>{avg:.2f}</code> USDT",
+            f"最新價格　: <code>{state['price']:.2f}</code> USDT",
+            f"浮動盈虧　: <code>{pnl:+.2f}</code> USDT",
+            f"狀態　　　: {'運行中' if TRADING_ENABLED else '已暫停'}",
+            f"波段高點　: <code>{peak_price:.2f}</code> (回撤 <code>{drawdown:+.2f}%</code>)"
         ]
         text = "\n".join(lines)
-    
+
     # 發送或印 log
     if update:
         await update.message.reply_text(text, parse_mode='HTML')
