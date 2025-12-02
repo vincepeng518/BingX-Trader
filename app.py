@@ -235,7 +235,12 @@ def start_tg_bot():
 
 # ==================== 主迴圈 ====================
 def trading_loop():
+    global last_grid_price, peak_price, alert_sent
     first = True
+    last_grid_price = None
+    peak_price = 0.0
+    alert_sent = False
+    
     print("交易迴圈已啟動")
     while True:
         try:
@@ -253,8 +258,7 @@ def trading_loop():
             # 首倉
             if first and state['long_size'] == 0:
                 add_long(BASE_SIZE)
-                last_grid_price = state['price']
-                global peak_price, alert_sent
+                last_grid_price = state['price']      # 這裡才賦值
                 peak_price = state['price']
                 alert_sent = False
                 first = False
