@@ -7,26 +7,26 @@
     <style>
         body {
             background: #000;
-            color: #fff;
-            font-family: 'Courier New', Consolas, monospace;
+            color: #ffffff;                    /* 所有文字預設白色 */
+            font-family: 'Courier New', monospace;
             margin: 0;
             padding: 20px;
+            line-height: 1.6;
         }
-        h1, h2 { color: #0f0; text-align: center; }
+        h1 { color: #0f0; text-align: center; margin-bottom: 30px; }
         .box {
             background: #111;
-            border: 1px solid #0f0;
-            padding: 15px;
-            margin: 15px 0;
+            border: 1px solid #333;
+            padding: 18px;
+            margin: 20px 0;
             border-radius: 8px;
         }
         button {
             background: #0f0;
             color: #000;
             border: none;
-            padding: 12px 20px;
-            margin: 8px;
-            font-size: 16px;
+            padding: 12px 24px;
+            margin: 6px;
             font-weight: bold;
             cursor: pointer;
             border-radius: 6px;
@@ -38,22 +38,21 @@
             margin-top: 10px;
         }
         th, td {
-            border: 1px solid #0f0;
+            border: 1px solid #444;
             padding: 10px;
             text-align: center;
+            color: #fff;                       /* 強制白色 */
         }
-        th { background: #003300; color: #0f0; }
-        tr:nth-child(even) { background: #0a0a0a; }
+        th { background: #001100; }
+        .pnl-green { color: #00ff00; font-weight: bold; }
+        .pnl-red   { color: #ff3333; font-weight: bold; }
         .highlight { color: #0f0; font-weight: bold; }
-        .red { color: #f66; }
-        .green { color: #0f0; }
     </style>
 </head>
 <body>
     <h1>XAUT/USDT 強化馬丁格爾機器人</h1>
 
     <div class="box">
-        <h2>即時狀態</h2>
         <p>金價：<span id="price" class="highlight">載入中...</span> USDT</p>
         <p>持倉：<span id="size" class="highlight">-</span> 張（共 <span id="count">0</span> 筆）</p>
         <p>浮動盈虧：<span id="pnl" class="highlight">-</span> USDT</p>
@@ -61,7 +60,6 @@
     </div>
 
     <div class="box">
-        <h2>Telegram 手動控制</h2>
         <button onclick="cmd('status')">發送 /status</button>
         <button onclick="cmd('pause')">暫停交易</button>
         <button onclick="cmd('resume')">恢復交易</button>
@@ -69,13 +67,10 @@
     </div>
 
     <div class="box">
-        <h2>最近 15 筆交易紀錄</h2>
+        <h2 style="color:#0f0;margin-top:0;">最近 15 筆交易紀錄</h2>
         <table>
             <thead>
-                <tr>
-                    <th>時間</th>
-                    <th>交易動作</th>
-                </tr>
+                <tr><th>時間</th><th>動作</th></tr>
             </thead>
             <tbody id="trades"></tbody>
         </table>
@@ -84,7 +79,6 @@
     <script>
         function cmd(action) {
             fetch(`/tg/${action}`);
-            alert('已執行 /' + action);
         }
 
         function update() {
@@ -94,14 +88,20 @@
                     document.getElementById('price').innerText = Number(d.price).toFixed(2);
                     document.getElementById('size').innerText = Number(d.long_size).toFixed(6);
                     document.getElementById('count').innerText = d.entries.length;
-                    
+                    document.getElementById('stat').innerText = d.status;
+
+                    // 盈虧專屬紅綠，其餘白色
                     const pnl = Number(d.total_pnl);
                     const pnlEl = document.getElementById('pnl');
                     pnlEl.innerText = pnl.toFixed(2);
-                    pnlEl.className = pnl >= 0 ? 'highlight green' : 'highlight red';
+                    if (pnl >= 0) {
+                        pnlEl.className = 'pnl-green';
+                        pnlEl.innerText = '+' + pnl.toFixed(2);
+                    } else {
+                        pnlEl.className = 'pnl-red';
+                    }
 
-                    document.getElementById('stat').innerText = d.status;
-
+                    // 交易紀錄
                     let tb = document.getElementById('trades');
                     tb.innerHTML = '';
                     (d.trades || []).slice(-15).reverse().forEach(t => {
