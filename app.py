@@ -226,6 +226,8 @@ def trading_loop():
                 state['funding_alert'] = True
 
             state['status'] = f"持倉 {long_size:.4f} | {len(state['entries'])} 筆 | 盈虧 {calc_pnl():+.2f}"
+            if int(time.time()) % 60 == 0:
+                sync_bingx_positions()
             time.sleep(8)
 
         except Exception as e:
@@ -240,85 +242,133 @@ def home(): return render_template('dashboard.html')
 def api(): return jsonify(state)
 
 # ==================== Telegram 遠端指令控制（開關機器人超方便）===================
+# ==================== 終極版 Telegram + BingX 真實持倉同步 ====================
+from telegram.ext import Application, CommandHandler
 import asyncio
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
 
+# 全域變數（確保在最上面）
 TRADING_ENABLED = True
 peak_price = 0.0
 alert_sent = False
 last_grid_price = None
+
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 async def tg_notify(msg):
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
         try:
             bot = Bot(token=TELEGRAM_TOKEN)
             await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg, parse_mode='HTML')
-        except:
-            pass
+        except Exception as e:
+            print(f"TG 通知失敗: {e}")
+    else:
+        print(f"通知（無 TG）：{msg}")
 
 def notify(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}")
-    asyncio.run(tg_notify(msg))
+    asyncio.create_task(tg_notify(msg))  # 非阻塞
 
-# 強制啟動 Telegram 指令監聽
-def start_telegram_bot():
-    token = os.getenv("TELEGRAM_TOKEN")
-    if not token:
-        print("Warning: 未設定 TELEGRAM_TOKEN，指令功能關閉（通知還是會發）")
-        return
-
-    async def status_cmd(update, context):
-        pnl = calc_pnl()
-        entries = state['entries']
-        if not entries:
-            text = "<b>目前無持倉，等待首倉進場</b>"
+# 強制從 BingX 同步持倉（關鍵！永不脫鉤）
+def sync_bingx_positions():
+    try:
+        pos = get_pos()  # 你原本的 get_pos() 函數
+        long_size, entry_price = pos
+        if long_size > 0:
+            # 如果 BingX 有持倉，但本地 entries 空 → 強制重建
+            if not state['entries']:
+                state['entries'] = [{'price': entry_price, 'size': long_size}]
+                notify(f"持倉同步：從 BingX 拉到 {long_size:.6f} 張 @ {entry_price:.2f}")
+            # 更新本地總 size（防滑價）
+            total_local = sum(e['size'] for e in state['entries'])
+            if abs(total_local - long_size) > 0.0001:
+                notify(f"持倉微調：本地 {total_local:.6f} → BingX {long_size:.6f}")
+                # 簡易調整最後一筆
+                if state['entries']:
+                    state['entries'][-1]['size'] = long_size - sum(e['size'] for e in state['entries'][:-1])
         else:
-            lines = [f"<b>持倉明細（{len(entries)} 筆）</b>"]
-            total_size = total_cost = 0
-            for i, e in enumerate(entries, 1):
-                sz = e['size']
-                pr = e['price']
-                val = sz * pr
-                total_size += sz
-                total_cost += val
-                lines.append(f"{i:>2} │ {sz:.6f} │ {pr:>8.2f} │ ${val:>6.2f}")
-            avg = total_cost / total_size
-            lines += ["", 
-                     f"總手數　　: <code>{total_size:.6f}</code> 張",
-                     f"平均成本　: <code>{avg:.2f}</code>",
-                     f"最新價格　: <code>{state['price']:.2f}</code>",
-                     f"浮動盈虧　: <code>{pnl:+.2f}</code> USDT",
-                     f"狀態　　　: {'<b>運行中</b>' if TRADING_ENABLED else '<b>已暫停</b>'}"]
-            text = "\n".join(lines)
-        await update.message.reply_text(text, parse_mode='HTML')
+            # BingX 無持倉 → 清空本地
+            if state['entries']:
+                state['entries'].clear()
+                notify("BingX 無持倉，本地已清空")
+    except Exception as e:
+        print(f"持倉同步失敗: {e}")
 
-    async def pause_cmd(update, context):
-        global TRADING_ENABLED
-        TRADING_ENABLED = False
-        await update.message.reply_text("已暫停交易（加倉與自動出場停止）")
+# /status 指令（從 BingX 真實拉持倉 + 美觀顯示）
+async def status_cmd(update, context):
+    sync_bingx_positions()  # 先強制同步！
+    
+    pnl = calc_pnl()
+    entries = state['entries']
+    
+    if not entries or sum(e['size'] for e in entries) == 0:
+        text = "<b>🚫 目前無持倉</b>\n等待價格觸發首倉（基準價：{last_grid_price:.2f if last_grid_price else '未設'}）\n最新金價：{state['price']:.2f}"
+    else:
+        lines = ["<b>📊 持倉明細（從 BingX 同步）</b>"]
+        total_size = total_cost = 0.0
+        for i, e in enumerate(entries, 1):
+            sz = e['size']
+            pr = e['price']
+            val = sz * pr
+            total_size += sz
+            total_cost += val
+            lines.append(f"{i:>2d} │ {sz:>7.6f} │ {pr:>7.2f} │ 價值 {val:>6.2f}＄")
+        
+        avg = total_cost / total_size if total_size > 0 else 0
+        unrealized = total_size * state['price'] - total_cost
+        lines += [
+            "",
+            f"📈 <b>總結</b>",
+            f"總手數　：{total_size:>7.6f} 張",
+            f"平均成本：{avg:>7.2f} USDT",
+            f"最新價格：{state['price']:>7.2f} USDT",
+            f"浮盈虧　：{unrealized:+6.2f} USDT (含費 {pnl:+6.2f})",
+            f"狀態　　　：{'🟢 運行中' if TRADING_ENABLED else '🔴 已暫停'}",
+            f"波段高點　：{peak_price:>7.2f} (回撤 {((peak_price - state['price'])/peak_price *100):+.2f}%)"
+        ]
+        text = "\n".join(lines)
+    
+    await update.message.reply_text(text, parse_mode='HTML')
 
-    async def resume_cmd(update, context):
-        global TRADING_ENABLED
-        TRADING_ENABLED = True
-        await update.message.reply_text("已恢復交易，繼續吃肉！")
+# 其他指令（簡化版）
+async def pause_cmd(update, context):
+    global TRADING_ENABLED
+    TRADING_ENABLED = False
+    await update.message.reply_text("🔴 交易已暫停（加倉/出場停止）")
 
-    async def forceclose_cmd(update, context):
-        await update.message.reply_text("正在強制市價全平…")
-        close_all()
-        await update.message.reply_text("已強制全平！")
+async def resume_cmd(update, context):
+    global TRADING_ENABLED
+    TRADING_ENABLED = True
+    await update.message.reply_text("🟢 交易已恢復！")
 
-    app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("status", status_cmd))
-    app.add_handler(CommandHandler("pause", pause_cmd))
-    app.add_handler(CommandHandler("resume", resume_cmd))
-    app.add_handler(CommandHandler("forceclose", forceclose_cmd))
+async def forceclose_cmd(update, context):
+    await update.message.reply_text("⚡ 強制全平中...")
+    close_all()
+    await update.message.reply_text("✅ 已全平！持倉清零")
 
-    print("Telegram 指令監聽已啟動！輸入 /status 測試")
-    app.run_polling(drop_pending_updates=True)
+# 啟動 Telegram Bot（強制版，無 token 也會印 log）
+def start_telegram_bot():
+    if not TELEGRAM_TOKEN:
+        print("⚠️ 未填 TELEGRAM_TOKEN，/status 等指令只在 log 顯示（通知仍發）")
+        # 即使無 token，也模擬 status 給 log
+        print("模擬 /status 結果：")
+        status_result = asyncio.run(status_cmd(None, None))  # 這行會印在 log
+        return
+    
+    try:
+        app = Application.builder().token(TELEGRAM_TOKEN).build()
+        app.add_handler(CommandHandler("status", status_cmd))
+        app.add_handler(CommandHandler("pause", pause_cmd))
+        app.add_handler(CommandHandler("resume", resume_cmd))
+        app.add_handler(CommandHandler("forceclose", forceclose_cmd))
+        
+        print("✅ Telegram Bot 已啟動！打 /status 測試")
+        app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+    except Exception as e:
+        print(f"❌ Telegram 啟動失敗: {e}（檢查 token）")
 
-# 啟動（一定要放最下面）
-threading.Thread(target=start_telegram_bot, daemon=True).start()
+# 在 trading_loop() 每 5 分鐘強制同步一次 BingX 持倉
+# 加在 trading_loop() 循環裡：if int(time.time()) % 300 == 0: sync_bingx_positions()
 
 # ==================== 啟動 ====================
 if __name__ == '__main__':
