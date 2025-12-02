@@ -8,14 +8,27 @@ import requests
 
 app = Flask(__name__, template_folder='templates')
 
-exchange = ccxt.bingx({
-    'apiKey': os.getenv('BINGX_API_KEY'),
-    'secret': os.getenv('BINGX_SECRET'),
-    'enableRateLimit': True,
-    'options': {'defaultType': 'swap'},
-})
-exchange.set_sandbox_mode(os.getenv('SANDBOX', 'true').lower() == 'true')
-
+# ==================== BingX ====================
+try:
+    exchange = ccxt.bingx({
+        'apiKey': os.getenv('BINGX_API_KEY'),
+        'secret': os.getenv('BINGX_SECRET'),
+        'enableRateLimit': True,
+        'options': {'defaultType': 'swap'},
+    })
+    exchange.set_sandbox_mode(os.getenv('SANDBOX', 'true').lower() == 'true')
+    
+    # 強制加載市場資料（Render 必備！）
+    exchange.load_markets()
+    print(f"市場載入成功，共 {len(exchange.markets)} 個交易對")
+    
+    market = exchange.market(symbol)  # 現在安全了
+    print("XAUT/USDT:USDT 交易對已就緒")
+except Exception as e:
+    print(f"BingX 初始化失敗: {e}")
+    exchange = None
+    market = None
+    
 symbol = 'XAUT/USDT:USDT'
 
 # ==================== 雙向參數（可獨立調整）===================
