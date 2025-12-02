@@ -22,12 +22,12 @@ exchange.set_sandbox_mode(os.getenv('SANDBOX', 'true').lower() == 'true')
 symbol = 'XAUT/USDT:USDT'
 
 # ==================== 動態參數（會自動更新！）===================
-class="highlight"
+# ==================== 動態參數（每天自動優化）===================
 class Config:
-    BASE_SIZE = float(os.getenv('BASE_SIZE', '0.0005'))
-    MULTIPLIER = float(os.getenv('MULTIPLIER', '1.33'))
-    GRID_PCT_1 = float(os.getenv('GRID_PCT_1', '0.0005'))
-    GRID_PCT_2 = float(os.getenv('GRID_PCT_2', '0.0010'))
+    BASE_SIZE       = float(os.getenv('BASE_SIZE', '0.0005'))
+    MULTIPLIER      = float(os.getenv('MULTIPLIER', '1.33'))
+    GRID_PCT_1      = float(os.getenv('GRID_PCT_1', '0.0005'))
+    GRID_PCT_2      = float(os.getenv('GRID_PCT_2', '0.0010'))
     PROFIT_PER_GRID = float(os.getenv('PROFIT_PER_GRID', '0.05'))
 
 # ==================== 精度 ====================
@@ -141,7 +141,7 @@ def auto_optimize_parameters():
         else:
             time.sleep(60)  # 平時每分鐘檢查一次
         
-        
+
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, '1h', limit=168)  # 7天
             closes = [x[4] for x in ohlcv]
@@ -247,13 +247,13 @@ def trading_loop():
                         # ========== 終極必加碼版（實測100%觸發）==========
             # 首倉
             if first and state['long_size'] == 0:
-                add_long(BASE_SIZE)
+                add_long(Config.BASE_SIZE)
                 last_grid_price = state['price']
                 peak_price = state['price']
                 alert_sent = False
                 first = False
                 # 一定要設 False
-                notify(f"<b>首倉已開！</b>\n手數: {BASE_SIZE:.6f} 張 @ {state['price']:.2f}")
+                notify(f"<b>首倉已開！</b>\n手數: {Config.BASE_SIZE:.6f} 張 @ {state['price']:.2f}")
                 time.sleep(3)
                 continue
 
@@ -264,7 +264,7 @@ def trading_loop():
                 
                 # 關鍵：只要當前價格 ≤ 觸發價 + 1 點，就強制加碼（防卡單）
                 if state['price'] <= trigger_price + 1.0:
-                    next_size = BASE_SIZE * (MULTIPLIER ** len(state['entries']))
+                    next_size = Config.BASE_SIZE * (MULTIPLIER ** len(state['entries']))
                     add_long(next_size)
                     last_grid_price = state['price']             # 強制更新！這行決定下一筆
                     notify(f"<b>第 {len(state['entries'])} 筆加碼成功！</b>\n"
