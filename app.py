@@ -294,7 +294,11 @@ def trading_loop():
             time.sleep(15)
 
 # ==================== Flask ====================
-from threading import Thread
+from flask import Flask, render_template, jsonify
+import os
+
+# 強制讓 Flask 找到 templates 資料夾（Render 免費版必加！）
+app = Flask(__name__, template_folder='templates')
 
 def run_async(coro):
     """在背景執行 async 函數，永遠不會炸"""
