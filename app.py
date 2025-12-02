@@ -110,6 +110,8 @@ def should_exit():
     return state['total_pnl'] >= required
 
 def add_long(size):
+    if not TRADING_ENABLED:
+        return
     qty = fmt_qty(size)
     if len(state['entries']) >= MAX_GRIDS:
         notify("已達最大加倉次數，停止加倉")
@@ -124,7 +126,8 @@ def add_long(size):
 
 def close_all():
     size, _ = get_pos()
-    if size == 0: return
+    if not TRADING_ENABLED:
+        return
     qty = fmt_qty(size)
     try:
         order = exchange.create_market_sell_order(symbol, qty, params={'positionSide': 'LONG'})
@@ -143,6 +146,9 @@ def trading_loop():
     last_grid_price = None
 
     while True:
+        if not TRADING_ENABLED == False:
+            time.sleep(10)
+            continue
         try:
             ticker = exchange.fetch_ticker(symbol)
             state['price'] = price = ticker['last']
@@ -194,6 +200,68 @@ def home(): return render_template('dashboard.html')
 
 @app.route('/api/data')
 def api(): return jsonify(state)
+
+# ==================== Telegram 遠端指令控制（開關機器人超方便）===================
+import asyncio
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+# 全域交易開關（True = 允許交易，False = 完全暫停加倉與出場）
+TRADING_ENABLED = True
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "<b>BingX XAUT 馬丁機器人控制面板</b>\n\n"
+        "指令列表：\n"
+        "/status  - 查目前狀態\n"
+        "/pause   - 暫停所有交易\n"
+        "/resume  - 恢復交易\n"
+        "/forceclose - 強制市價全平倉位",
+        parse_mode='HTML')
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global TRADING_ENABLED
+    pnl = calc_pnl()
+    await update.message.reply_text(
+        f"<b>目前狀態</b>\n"
+        f"交易功能：{'<code>運行中</code>' if TRADING_ENABLED else '<code>已暫停</code>'}\n"
+        f"金價：{state['price']:.1f}\n"
+        f"持倉：{state['long_size']:.6f} 張（{len(state['entries'])} 筆）\n"
+        f"總盈虧：{pnl:+.2f} USDT",
+        parse_mode='HTML')
+
+async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global TRADING_ENABLED
+    TRADING_ENABLED = False
+    await update.message.reply_text("交易已暫停，加倉與自動出場全部停止")
+
+async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global TRADING_ENABLED = True
+    await update.message.reply_text("交易已恢復，機器人繼續吃波動")
+
+async def forceclose(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("正在強制市價全平，請稍等...")
+    close_all()
+    await update.message.reply_text("已強制全平倉位平掉！")
+
+# 啟動 Telegram 指令監聽（背景執行，不卡主程式）
+def start_telegram_bot():
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("未設定 Telegram Token，指令控制功能關閉")
+        return
+
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("pause", pause))
+    app.add_handler(CommandHandler("resume", resume))
+    app.add_handler(CommandHandler("forceclose", forceclose))
+
+    print("Telegram 遠端控制已啟動！")
+    app.run_polling(drop_pending_updates=True)
+
+# 在最下面啟動（和 Flask 一起跑）
+threading.Thread(target=start_telegram_bot, daemon=True).start()
 
 # ==================== 啟動 ====================
 if __name__ == '__main__':
