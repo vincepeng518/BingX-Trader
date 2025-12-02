@@ -257,15 +257,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML')
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global TRADING_ENABLED
     pnl = calc_pnl()
-    await update.message.reply_text(
-        f"<b>目前狀態</b>\n"
-        f"交易功能：{'<code>運行中</code>' if TRADING_ENABLED else '<code>已暫停</code>'}\n"
-        f"金價：{state['price']:.1f}\n"
-        f"持倉：{state['long_size']:.6f} 張（{len(state['entries'])} 筆）\n"
-        f"總盈虧：{pnl:+.2f} USDT",
-        parse_mode='HTML')
+    entries = state['entries']
+    
+    if not entries:
+        msg = "<b>目前無持倉，等待首倉進場</b>"
+    else:
+        # 每筆持倉明細
+        lines = []
+        total_size = 0.0
+        total_cost = 0.0
+        for i, e in enumerate(entries, 1):
+            size = e['size']
+            price = e['price']
+            value = size * price
+            total_size += size
+            total_cost += value
+            lines.append(
+                f"{i:>2}｜{size:>.6f} 張｜{price:>8.2f}｜價值 {value:>7.2f}＄"
+            )
+        
+        avg_price = total_cost / total_size if total_size > 0 else 0
+        
+        msg = f"<b>目前持倉明細（共 {len(entries)} 筆）</b>\n\n"
+        msg += "\n".join(lines)
+        msg += f"\n\n"
+        msg += f"總手數　　：<code>{total_size:.6f}</code> 張\n"
+        msg += f"平均成本　：<code>{avg_price:.2f}</code>\n"
+        msg += f"最新價格　：<code>{state['price']:.2f}</code>\n"
+        msg += f"浮動盈虧　：<code>{pnl:+.2f}</code> USDT\n"
+        msg += f"交易狀態　　：{'<b>運行中</b>' if TRADING_ENABLED else '<b>已暫停</b>'}"
+
+    await update.message.reply_text(msg, parse_mode='HTML')
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global TRADING_ENABLED
