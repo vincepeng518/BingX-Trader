@@ -8,6 +8,7 @@ import requests
 
 app = Flask(__name__, template_folder='templates')
 
+symbol = 'XAUT/USDT:USDT'
 # ==================== BingX ====================
 try:
     exchange = ccxt.bingx({
@@ -28,8 +29,8 @@ except Exception as e:
     print(f"BingX 初始化失敗: {e}")
     exchange = None
     market = None
-    
-symbol = 'XAUT/USDT:USDT'
+
+
 
 # ==================== 雙向參數（可獨立調整）===================
 LONG_BASE     = 0.0005
