@@ -28,7 +28,7 @@ MULTIPLIER = 1.33
 GRID_PCT_1 = 0.0005      # 前12筆 0.05%
 GRID_PCT_2 = 0.0010      # 第13筆起 0.1%
 PROFIT_PER_GRID = 0.05   # 每筆要賺 0.05U 才平
-MAX_GRIDS = 20           # 絕對安全上限，防爆倉
+MAX_GRIDS = 99999           # 絕對安全上限，防爆倉
 
 # ==================== 精度 ====================
 # ==================== 超穩精度獲取（支援 BingX 2024~2025 所有版本）===================
@@ -70,6 +70,8 @@ def fmt_price(p): return round(p - (p % TICK_SIZE), 8)
 def fmt_qty(q): return max(MIN_QTY, round(q - (q % LOT_SIZE), 6))
 
 # ==================== 狀態 ====================
+peak_price = 0.0           # 記錄當前波段最高價
+alert_sent = False         # 避免重複發送警告
 state = {
     'price': 0.0, 'long_size': 0.0, 'long_entry': 0.0,
     'entries': [], 'pending_rebound': None,
@@ -114,17 +116,27 @@ def should_exit():
 def add_long(size):
     if not TRADING_ENABLED:
         return
+    
     qty = fmt_qty(size)
-    if len(state['entries']) >= MAX_GRIDS:
-        notify("已達最大加倉次數，停止加倉")
+    if qty <= 0:
         return
+
     try:
-        order = exchange.create_market_buy_order(symbol, qty, params={'positionSide': 'LONG'})
+        order = exchange.create_market_buy_order(
+            symbol, qty, 
+            params={'positionSide': 'LONG'}
+        )
         state['entries'].append({'price': state['price'], 'size': qty})
-        state['trades'].append(f"加倉 {qty:.4f} @ {state['price']:.2f}")
-        notify(f"<b>逆勢加倉 第 {len(state['entries'])} 筆</b>\n手數: <code>{qty:.4f}</code>\n價格: <code>{state['price']:.2f}</code>")
+        state['trades'].append(f"加倉 {qty:.6f} @ {state['price']:.2f}")
+        
+        notify(
+            f"<b>逆勢加倉成功！第 {len(state['entries'])} 筆</b>\n"
+            f"手數: <code>{qty:.6f}</code> 張\n"
+            f"價格: <code>{state['price']:.2f}</code> USDT\n"
+            f"倉位價值 ≈ <code>{qty * state['price']:.2f}</code> USDT"
+        )
     except Exception as e:
-        notify(f"<b>加倉失敗</b>\n{e}")
+        notify(f"<b>加倉失敗</b>\n<code>{e}</code>")
 
 def close_all():
     size, _ = get_pos()
@@ -174,12 +186,33 @@ def trading_loop():
                 continue
 
             # 逆勢加倉
+            global peak_price, alert_sent
+
+            # 更新波段最高價
+            if state['price'] > peak_price:
+                peak_price = state['price']
+                alert_sent = False  # 新高重置警報
+
+            # 計算從高點最大回撤
+            drawdown_pct = (peak_price - state['price']) / peak_price
+
+            # 大波動預警：跌超 1% 但還沒回調 0.3% → 極佳加倉/出場時機
+            if drawdown_pct > 0.010 (10‰) and drawdown_pct < 0.003 (3‰) and not alert_sent and len(state['entries']) > 0:
+                notify(
+                    "<b>大波動警報！</b>\n"
+                    f"從高點 {peak_price:.1f} 已下跌 {drawdown_pct*100:.2f}%\n"
+                    f"目前價格：{state['price']:.1f}\n"
+                    "⚡ 極佳加倉 / 出場時機來了！可手動 /forceclose 或繼續加倉"
+                )
+                alert_sent = True
+
+            # 逆勢加倉邏輯（已移除筆數限制）
             if long_size > 0 and last_grid_price:
                 grid = GRID_PCT_1 if len(state['entries']) < 12 else GRID_PCT_2
-                if price <= last_grid_price * (1 - grid):
+                if state['price'] <= last_grid_price * (1 - grid):
                     size = BASE_SIZE * (MULTIPLIER ** len(state['entries']))
                     add_long(size)
-                    last_grid_price = price
+                    last_grid_price = state['price']
 
             # 資金費率提醒（每8小時檢查一次）
             if int(time.time()) % 28800 == 0 and not state['funding_alert']:
