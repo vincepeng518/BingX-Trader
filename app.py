@@ -197,7 +197,7 @@ def trading_loop():
             drawdown_pct = (peak_price - state['price']) / peak_price
 
             # 大波動預警：跌超 1% 但還沒回調 0.3% → 極佳加倉/出場時機
-            if drawdown_pct > 0.010 (10‰) and drawdown_pct < 0.003 (3‰) and not alert_sent and len(state['entries']) > 0:
+            if drawdown_pct > 0.010 and drawdown_pct <= 0.013 and not alert_sent and len(state['entries']) > 0:
                 notify(
                     "<b>大波動警報！</b>\n"
                     f"從高點 {peak_price:.1f} 已下跌 {drawdown_pct*100:.2f}%\n"
