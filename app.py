@@ -82,7 +82,8 @@ async def tg_notify(msg):
 
 def notify(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}")
-    asyncio.create_task(tg_notify(msg))
+    if TELEGRAM_TOKEN:
+        run_async(tg_notify(msg))   # 用我們自己的 run_async
 
 # ==================== BingX 同步持倉（關鍵！） ====================
 def sync_positions():
@@ -289,39 +290,41 @@ def trading_loop():
             time.sleep(15)
 
 # ==================== Flask ====================
-@app.route('/')
-def home():
-    return render_template('dashboard.html')
+from threading import Thread
 
-@app.route('/api/data')
-def api():
-    sync_positions()
-    return jsonify(state)
+def run_async(coro):
+    """在背景執行 async 函數，永遠不會炸"""
+    def thread_target():
+        try:
+            asyncio.run(coro)
+        except Exception as e:
+            print(f"async 執行失敗: {e}")
+    Thread(target=thread_target, daemon=True).start()
 
-# 加到 @app.route 下面
 @app.route('/tg/status')
 def tg_status():
-    asyncio.run(status_cmd(None, None))  # 手動觸發，無 update 就印 log
-    return "Status sent to TG/log"
+    run_async(status_cmd(None, None))
+    return "Status 已發送到 Telegram / log"
 
 @app.route('/tg/pause')
 def tg_pause():
     global TRADING_ENABLED
     TRADING_ENABLED = False
-    notify("手動暫停交易")
-    return "Paused"
+    run_async(tg_notify("交易已手動暫停"))
+    return "已暫停"
 
 @app.route('/tg/resume')
 def tg_resume():
     global TRADING_ENABLED
     TRADING_ENABLED = True
-    notify("手動恢復交易")
-    return "Resumed"
+    run_async(tg_notify("交易已手動恢復"))
+    return "已恢復"
 
 @app.route('/tg/close')
 def tg_close():
-    close_all()
-    return "Closed"
+    run_async(tg_notify("強制全平執行中..."))
+    Thread(target=close_all, daemon=True).start()
+    return "全平指令已發送"
 
 # ==================== 啟動 ====================
 if __name__ == '__main__':
