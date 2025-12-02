@@ -173,9 +173,11 @@ def trading_loop():
             # 首次自動開倉
             if first and long_size == 0:
                 add_long(BASE_SIZE)
-                last_grid_price = price
+                last_grid_price = state['price']  # 關鍵！一定要設
+                peak_price = state['price']       # 波動預警也一起初始化
+                notify(f"<b>首倉已開！</b>\n價格：{state['price']:.2f}\n手數：{BASE_SIZE:.6f} 張（≈2.01 USDT）")
                 first = False
-                time.sleep(5)
+                time.sleep(3)
                 continue
 
             # 獲利出場
