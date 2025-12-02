@@ -137,11 +137,41 @@ def run():
             sync()
 
             # 多單加碼（價格下跌）
-            if state['long_size'] > 0 and long_last_grid is not None:
-                grid = LONG_GRID1 if len(state['long_entries']) < 12 else LONG_GRID2
-                if state['price'] <= long_last_grid * (1 - grid):
-                    long_add()
-                    long_last_grid = state['price']
+            if state['long_size'] == 0 and state['short_size'] == 0:
+                # 根據當前價格與昨天收盤價比較，決定先開多還是先開空
+                try:
+                    ohlcv = exchange.fetch_ohlcv(symbol, '1d', limit=2)
+                    yesterday_close = ohlcv[-2][4]  # 昨天收盤價
+                    today_open = ohlcv[-1][1]       # 今天開盤價
+                    
+                    if today_open > yesterday_close:  # 上漲趨勢 → 先開空
+                        q = qty(SHORT_BASE)
+                        exchange.create_market_sell_order(symbol, q, params={'positionSide': 'SHORT'})
+                        short_last_grid = state['price']
+                        state['short_entries'].append({'price': state['price'], 'size': q})
+                        state['trades'].append(f"自動開空首倉 {q:.6f}")
+                        notify(f"自動開空首倉！\n手數: <code>{q:.6f}</code> 張 @ {state['price']:.2f}")
+                    else:  #  # 下跌或持平 → 先開多
+                        q = qty(LONG_BASE)
+                        exchange.create_market_buy_order(symbol, q, params={'positionSide': 'LONG'})
+                        long_last_grid = state['price']
+                        state['long_entries'].append({'price': state['price'], 'size': q})
+                        state['trades'].append(f"自動開多首倉 {q:.6f}")
+                        notify(f"自動開多首倉！\n手數: <code>{q:.6f}</code> 張 @ {state['price']:.2f}")
+                except Exception as e:
+                    # 如果抓不到K線，就用最簡單邏輯：隨機開一邊
+                    if random.random() > 0.5:
+                        q = qty(SHORT_BASE)
+                        exchange.create_market_sell_order(symbol, q, params={'positionSide': 'SHORT'})
+                        short_last_grid = state['price']
+                        notify("隨機開空首倉（無K線資料）")
+                    else:
+                        q = qty(LONG_BASE)
+                        exchange.create_market_buy_order(symbol, q, params={'positionSide': 'LONG'})
+                        long_last_grid = state['price']
+                        notify("隨機開多首倉（無K線資料）")
+                time.sleep(5)
+                continue
 
             # 空單加碼（價格上漲）
             if state['short_size'] > 0 and short_last_grid is not None:
