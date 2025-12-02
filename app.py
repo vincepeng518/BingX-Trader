@@ -21,7 +21,7 @@ exchange = ccxt.bingx({
 exchange.set_sandbox_mode(os.getenv('SANDBOX', 'true').lower() == 'true')  # 設 false 就是實盤
 
 symbol = 'XAUT/USDT:USDT'
-BASE_SIZE = 0.05
+BASE_SIZE = 0.0005
 MULTIPLIER = 1.33
 GRID_PCT_1 = 0.0005      # 前12筆 0.05%
 GRID_PCT_2 = 0.0010      # 第13筆起 0.1%
