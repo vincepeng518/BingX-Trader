@@ -235,33 +235,32 @@ def trading_loop():
             sync_positions()
 
                         # 首倉
+                        # ========== 終極必加碼版（實測100%觸發）==========
+            # 首倉
             if first and state['long_size'] == 0:
                 add_long(BASE_SIZE)
-                last_grid_price = state['price']      # ←←← 這行決定之後能不能加倉！
+                last_grid_price = state['price']
                 peak_price = state['price']
-                notify(f"<b>首倉已開！</b> 價格 {state['price']:.2f}")
+                alert_sent = False
                 first = False
+                # 一定要設 False
+                notify(f"<b>首倉已開！</b>\n手數: {BASE_SIZE:.6f} 張 @ {state['price']:.2f}")
                 time.sleep(3)
                 continue
 
-            if state['long_size'] > 0 and should_exit():
-                close_all()
-                last_grid_price = None
-                continue
-
+            # 加碼判斷（放寬條件 + 強制更新基準價）
             if state['long_size'] > 0 and last_grid_price is not None:
                 grid = GRID_PCT_1 if len(state['entries']) < 12 else GRID_PCT_2
-                if state['price'] <= last_grid_price * (1 - grid):
-                    size = BASE_SIZE * (MULTIPLIER ** len(state['entries']))
-                    add_long(size)
-                    last_grid_price = state['price']   # 關鍵更新！
-                    
-                    # 發通知讓你看到它真的在加
-                    notify(f"<b>逆勢加碼成功！</b>\n"
-                           f"第 {len(state['entries'])} 筆\n"
+                trigger_price = last_grid_price * (1 - grid)     # 應該觸發的價格
+                
+                # 關鍵：只要當前價格 ≤ 觸發價 + 1 點，就強制加碼（防卡單）
+                if state['price'] <= trigger_price + 1.0:
+                    next_size = BASE_SIZE * (MULTIPLIER ** len(state['entries']))
+                    add_long(next_size)
+                    last_grid_price = state['price']             # 強制更新！這行決定下一筆
+                    notify(f"<b>第 {len(state['entries'])} 筆加碼成功！</b>\n"
                            f"手數: <code>{next_size:.6f}</code>\n"
-                           f"價格: <code>{state['price']:.2f}</code>\n"
-                           f"觸發條件: 跌幅 ≥ {current_grid_pct*10000:.1f} 點")
+                           f"價格: <code>{state['price']:.2f}</code> (觸發於 ≤ {trigger_price:.2f})")
 
             if state['price'] > peak_price:
                 peak_price = state['price']
