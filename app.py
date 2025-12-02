@@ -94,20 +94,70 @@ def sync():
     state['short_size'] = s_size
 
 # ==================== 多單邏輯 ====================
+# 原本的 add_long() 改成：
 def long_add():
     q = qty(LONG_BASE * (LONG_MULT ** len(state['long_entries'])))
-    exchange.create_market_buy_order(symbol, q, params={'positionSide': 'LONG'})
-    state['long_entries'].append({'price': state['price'], 'size': q})
-    state['trades'].append(f"多單加碼 {q:.6f}")
-    notify(f"🟢 <b>多單加碼 第{len(state['long_entries'])}筆</b>\n{q:.6f} 張 @ {state['price']:.2f}")
+    if open_long(q):
+        state['long_entries'].append({'price': state['price'], 'size': q})
+        state['trades'].append(f"多單加碼 {q:.6f}")
+        notify(f"多單加碼 第{len(state['long_entries'])}筆\n{q:.6f} 張")
+        global long_last_grid
+        long_last_grid = state['price']
 
-def long_close():
-    if state['long_size'] == 0: return
-    exchange.create_market_sell_order(symbol, state['long_size'], params={'positionSide': 'LONG'})
-    pnl = (state['price'] - sum(e['price']*e['size'] for e in state['long_entries'])/state['long_size']) * state['long_size']
-    notify(f"🟢 <b>多單全平！獲利 {pnl:+.2f} USDT</b>")
-    state['long_entries'].clear()
-    state['trades'].append(f"多單出場 +{pnl:+.2f}")
+# 原本的 short_add() 改成：
+def short_add():
+    q = qty(SHORT_BASE * (SHORT_MULT ** len(state['short_entries'])))
+    if open_short(q):
+        state['short_entries'].append({'price': state['price'], 'size': q})
+        state['trades'].append(f"空單加碼 {q:.6f}")
+        notify(f"空單加碼 第{len(state['short_entries'])}筆\n{q:.6f} 張")
+        global short_last_grid
+        short_last_grid = state['price]
+# ==================== 必開單版下單函數 ====================
+
+def open_long(qty):
+    try:
+        exchange.create_order(
+            symbol=symbol,
+            type='market',
+            side='buy',
+            amount=qty,
+            params={
+                'positionSide': 'LONG',
+                'reduceOnly': False          # 關鍵！必須加這行！
+            }
+        )
+        return True
+    except Exception as e:
+        print(f"開多失敗: {e}")
+        return False
+
+def open_short(qty):
+    try:
+        exchange.create_order(
+            symbol=symbol,
+            type='market',
+            side='sell',
+            amount=qty,
+            params={
+                'positionSide': 'SHORT',
+                'reduceOnly': False          # 關鍵！必須加這行！
+            }
+        )
+        return True
+    except Exception as e:
+        print(f"開空失敗: {e}")
+        return False
+
+def close_long():
+    if state['long_size'] <= 0: return
+    exchange.create_order(symbol, 'market', 'sell', state['long_size'],
+                         params={'positionSide': 'LONG', 'reduceOnly': True})
+
+def close_short():
+    if state['short_size'] <= 0: return
+    exchange.create_order(symbol, 'market', 'buy', state['short_size'],
+                         params={'positionSide': 'SHORT', 'reduceOnly': True})
 
 # ==================== 空單邏輯 ====================
 def short_add():
@@ -137,40 +187,17 @@ def run():
             sync()
 
             # 多單加碼（價格下跌）
-            if state['long_size'] == 0 and state['short_size'] == 0:
-                # 根據當前價格與昨天收盤價比較，決定先開多還是先開空
-                try:
-                    ohlcv = exchange.fetch_ohlcv(symbol, '1d', limit=2)
-                    yesterday_close = ohlcv[-2][4]  # 昨天收盤價
-                    today_open = ohlcv[-1][1]       # 今天開盤價
-                    
-                    if today_open > yesterday_close:  # 上漲趨勢 → 先開空
-                        q = qty(SHORT_BASE)
-                        exchange.create_market_sell_order(symbol, q, params={'positionSide': 'SHORT'})
-                        short_last_grid = state['price']
-                        state['short_entries'].append({'price': state['price'], 'size': q})
-                        state['trades'].append(f"自動開空首倉 {q:.6f}")
-                        notify(f"自動開空首倉！\n手數: <code>{q:.6f}</code> 張 @ {state['price']:.2f}")
-                    else:  #  # 下跌或持平 → 先開多
-                        q = qty(LONG_BASE)
-                        exchange.create_market_buy_order(symbol, q, params={'positionSide': 'LONG'})
-                        long_last_grid = state['price']
-                        state['long_entries'].append({'price': state['price'], 'size': q})
-                        state['trades'].append(f"自動開多首倉 {q:.6f}")
-                        notify(f"自動開多首倉！\n手數: <code>{q:.6f}</code> 張 @ {state['price']:.2f}")
-                except Exception as e:
-                    # 如果抓不到K線，就用最簡單邏輯：隨機開一邊
-                    if random.random() > 0.5:
-                        q = qty(SHORT_BASE)
-                        exchange.create_market_sell_order(symbol, q, params={'positionSide': 'SHORT'})
-                        short_last_grid = state['price']
-                        notify("隨機開空首倉（無K線資料）")
-                    else:
-                        q = qty(LONG_BASE)
-                        exchange.create_market_buy_order(symbol, q, params={'positionSide': 'LONG'})
-                        long_last_grid = state['price']
-                        notify("隨機開多首倉（無K線資料）")
-                time.sleep(5)
+                        if state['long_size'] == 0 and state['short_size'] == 0:
+                # 強制先開一張測試（你自己決定多或空）
+                if open_long(LONG_BASE):
+                    long_last_grid = state['price']
+                    state['long_entries'].append({'price': state['price'], 'size': LONG_BASE})
+                    notify("強制開多首倉成功！機器人已活！")
+                elif open_short(SHORT_BASE):
+                    short_last_grid = state['price']
+                    state['short_entries'].append({'price': state['price'], 'size': SHORT_BASE})
+                    notify("強制開空首倉成功！機器人已活！")
+                time.sleep(10)
                 continue
 
             # 空單加碼（價格上漲）
