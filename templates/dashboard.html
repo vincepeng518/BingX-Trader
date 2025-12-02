@@ -1,39 +1,85 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-TW">
 <head>
-    <title>BingX XAUT 馬丁機器人</title>
-    <meta charset="utf-8">
+    <meta charset="UTF-8">
+    <title>XAUT 馬丁機器人</title>
     <meta http-equiv="refresh" content="6">
     <style>
-        body {font-family: Consolas, monospace; background:#000; color:#0f0; padding:20px;}
-        button {background:#0f0; color:#000; padding:10px 20px; margin:5px; border:none; cursor:pointer; font-weight:bold;}
-        table {border-collapse: collapse; width: 100%; margin-top: 10px;}
-        th, td {border: 1px solid #0f0; padding: 8px; text-align: left;}
-        th {background: #003300;}
+        body {
+            background: #000;
+            color: #fff;
+            font-family: 'Courier New', Consolas, monospace;
+            margin: 0;
+            padding: 20px;
+        }
+        h1, h2 { color: #0f0; text-align: center; }
+        .box {
+            background: #111;
+            border: 1px solid #0f0;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 8px;
+        }
+        button {
+            background: #0f0;
+            color: #000;
+            border: none;
+            padding: 12px 20px;
+            margin: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 6px;
+        }
+        button:hover { background: #0c0; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid #0f0;
+            padding: 10px;
+            text-align: center;
+        }
+        th { background: #003300; color: #0f0; }
+        tr:nth-child(even) { background: #0a0a0a; }
+        .highlight { color: #0f0; font-weight: bold; }
+        .red { color: #f66; }
+        .green { color: #0f0; }
     </style>
 </head>
 <body>
     <h1>XAUT/USDT 強化馬丁格爾機器人</h1>
-    
-    <h2>即時狀態</h2>
-    <p>金價：<span id="price">載入中...</span></p>
-    <p>持倉：<span id="size">-</span> 張（共 <span id="count">0</span> 筆）</p>
-    <p>浮動盈虧：<span id="pnl">-</span> USDT</p>
-    <p>機器人：<span id="stat">載入中...</span></p>
 
-    <hr>
-    <h2>Telegram 手動控制（點即發）</h2>
-    <button onclick="cmd('status')">發送 /status</button>
-    <button onclick="cmd('pause')">暫停交易</button>
-    <button onclick="cmd('resume')">恢復交易</button>
-    <button onclick="cmd('close')">強制全平</button>
+    <div class="box">
+        <h2>即時狀態</h2>
+        <p>金價：<span id="price" class="highlight">載入中...</span> USDT</p>
+        <p>持倉：<span id="size" class="highlight">-</span> 張（共 <span id="count">0</span> 筆）</p>
+        <p>浮動盈虧：<span id="pnl" class="highlight">-</span> USDT</p>
+        <p>狀態：<span id="stat">載入中...</span></p>
+    </div>
 
-    <hr>
-    <h2>最近 15 筆交易紀錄</h2>
-    <table>
-        <thead><tr><th>時間</th><th>動作</th></tr></thead>
-        <tbody id="trades"></tbody>
-    </table>
+    <div class="box">
+        <h2>Telegram 手動控制</h2>
+        <button onclick="cmd('status')">發送 /status</button>
+        <button onclick="cmd('pause')">暫停交易</button>
+        <button onclick="cmd('resume')">恢復交易</button>
+        <button onclick="cmd('close')">強制全平</button>
+    </div>
+
+    <div class="box">
+        <h2>最近 15 筆交易紀錄</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>時間</th>
+                    <th>交易動作</th>
+                </tr>
+            </thead>
+            <tbody id="trades"></tbody>
+        </table>
+    </div>
 
     <script>
         function cmd(action) {
@@ -48,25 +94,27 @@
                     document.getElementById('price').innerText = Number(d.price).toFixed(2);
                     document.getElementById('size').innerText = Number(d.long_size).toFixed(6);
                     document.getElementById('count').innerText = d.entries.length;
-                    document.getElementById('pnl').innerText = Number(d.total_pnl).toFixed(2);
+                    
+                    const pnl = Number(d.total_pnl);
+                    const pnlEl = document.getElementById('pnl');
+                    pnlEl.innerText = pnl.toFixed(2);
+                    pnlEl.className = pnl >= 0 ? 'highlight green' : 'highlight red';
+
                     document.getElementById('stat').innerText = d.status;
 
                     let tb = document.getElementById('trades');
                     tb.innerHTML = '';
-                    // 確保 trades 是陣列（很重要！）
                     (d.trades || []).slice(-15).reverse().forEach(t => {
                         let tr = document.createElement('tr');
-                        let now = new Date().toLocaleTimeString('zh-TW');
-                        tr.innerHTML = `<td>${now}</td><td>${t}</td>`;
+                        tr.innerHTML = `<td>${new Date().toLocaleTimeString('zh-TW')}</td><td>${t}</td>`;
                         tb.appendChild(tr);
                     });
                 })
-                .catch(e => console.log("API 錯誤", e));
+                .catch(() => {});
         }
 
         setInterval(update, 6000);
         update();
-    update();
     </script>
 </body>
 </html>
