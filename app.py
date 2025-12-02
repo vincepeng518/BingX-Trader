@@ -20,6 +20,8 @@ exchange = ccxt.bingx({
 })
 exchange.set_sandbox_mode(os.getenv('SANDBOX', 'true').lower() == 'true')  # 設 false 就是實盤
 
+TRADING_ENABLED = True
+
 symbol = 'XAUT/USDT:USDT'
 BASE_SIZE = 0.0005
 MULTIPLIER = 1.33
@@ -236,7 +238,8 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("交易已暫停，加倉與自動出場全部停止")
 
 async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global TRADING_ENABLED = True
+    global TRADING_ENABLED 
+    TRADING_ENABLED = False
     await update.message.reply_text("交易已恢復，機器人繼續吃波動")
 
 async def forceclose(update: Update, context: ContextTypes.DEFAULT_TYPE):
