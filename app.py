@@ -125,14 +125,23 @@ def close_all():
 
 # ==================== 每日自動優化引擎 ====================
 def auto_optimize_parameters():
-    """每天凌晨 3 點自動優化參數"""
+    """每天凌晨 3:00~3:05 執行一次參數優化"""
     while True:
         now = datetime.now()
-        if now.hour == 3 and now.minute < 5) or time.sleep(60)
-            continue
+        # 每天凌晨 3 點到 3:05 之間只執行一次
+        if now.hour == 3 and 0 <= now.minute < 5:
+            try:
+                print("開始每日參數優化...")
+                # 你的優化邏輯（可留空先測試）
+                send_tg("每日參數優化執行中...（測試成功！）")
+                print("優化完成")
+            except Exception as e:
+                print(f"優化失敗: {e}")
+            time.sleep(300)  # 睡5分鐘，避免重複執行
+        else:
+            time.sleep(60)  # 平時每分鐘檢查一次
         
-        print("開始每日參數優化...")
-        # 抓過去 7 天 K 線
+        
         try:
             ohlcv = exchange.fetch_ohlcv(symbol, '1h', limit=168)  # 7天
             closes = [x[4] for x in ohlcv]
