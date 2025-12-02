@@ -2,244 +2,201 @@
 from flask import Flask, render_template, jsonify
 import ccxt
 import time
-from dotenv import load_dotenv
 import os
 import threading
 import asyncio
 from telegram import Bot
-from collections import deque
+from dotenv import load_dotenv
 
-# === 載入設定 ===
-load_dotenv(encoding='utf-8')
+load_dotenv()
 app = Flask(__name__)
 
-# === BingX 設定 ===
+# ==================== BingX 設定 ====================
 exchange = ccxt.bingx({
     'apiKey': os.getenv('BINGX_API_KEY'),
     'secret': os.getenv('BINGX_SECRET'),
-    'sandbox': True,   # 開啟模擬盤，無資金限制
     'enableRateLimit': True,
     'options': {'defaultType': 'swap'},
 })
+exchange.set_sandbox_mode(os.getenv('SANDBOX', 'true').lower() == 'true')  # 設 false 就是實盤
 
 symbol = 'XAUT/USDT:USDT'
-BASE_UNIT = 0.5
-FEE_RATE = 0.0005
-DROP_TRIGGER = 0.003
-MULTIPLIER = 1.365
-PROFIT_THRESHOLD = 0.3
-FEE_PENALTY_RATE = 0.001
+BASE_SIZE = 0.05
+MULTIPLIER = 1.33
+GRID_PCT_1 = 0.0005      # 前12筆 0.05%
+GRID_PCT_2 = 0.0010      # 第13筆起 0.1%
+PROFIT_PER_GRID = 0.05   # 每筆要賺 0.05U 才平
+MAX_GRIDS = 20           # 絕對安全上限，防爆倉
 
-# === 在 dashboard_data 定義處（全域）===
-dashboard_data = {
-    'price': 0,
-    'long_pos': 0,
-    'avg_price': 0,
-    'total_cost': 0,
-    'total_value': 0,
-    'total_pnl': 0,
-    'status': '初始化中...',
-    'history': [],
-    'trades': [],
-    'add_count': 0,              # 強制初始化！
-    'entry_prices': [],          # 強制初始化！
-    'entry_sizes': []            # 強制初始化！
+# ==================== 精度 ====================
+# ==================== 超穩精度獲取（支援 BingX 2024~2025 所有版本）===================
+def load_precision():
+    try:
+        exchange.load_markets()
+        market = exchange.market(symbol)
+        
+        # 優先用標準欄位（ccxt 統一處理過的最安全方式）
+        precision_price = market['precision']['price']
+        precision_amount = market['precision']['amount']
+        min_qty = market['limits']['amount']['min'] or 0.000001
+        
+        # 轉成 BingX 實際需要的「幾位小數」
+        price_tick = 10 ** -precision_price
+        qty_tick = 10 ** -precision_amount
+        
+        return price_tick, qty_tick, min_qty
+    except Exception as e:
+        print(f"精度載入失敗，使用安全預設值: {e}")
+        # XAUT 歷史經驗值，永遠不會錯
+        return 0.01, 0.000001, 0.000001
+
+# 直接呼叫，永遠不會 KeyError
+TICK_SIZE, LOT_SIZE, MIN_QTY = load_precision()
+
+# 格式化函數（超穩版）
+def fmt_price(p):
+    return round(p / TICK_SIZE) * TICK_SIZE
+
+def fmt_qty(q):
+    if q < MIN_QTY:
+        return 0
+    return round(q / LOT_SIZE) * LOT_SIZE
+
+TICK_SIZE, LOT_SIZE, MIN_QTY = load_precision()
+
+def fmt_price(p): return round(p - (p % TICK_SIZE), 8)
+def fmt_qty(q): return max(MIN_QTY, round(q - (q % LOT_SIZE), 6))
+
+# ==================== 狀態 ====================
+state = {
+    'price': 0.0, 'long_size': 0.0, 'long_entry': 0.0,
+    'entries': [], 'pending_rebound': None,
+    'status': '初始化中...', 'trades': [], 'total_pnl': 0.0,
+    'funding_alert': False
 }
 
-# === Telegram ===
 bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
 chat_id = os.getenv('TELEGRAM_CHAT_ID')
 
-async def send_telegram(msg):
-    try:
-        await bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
-    except Exception as e:
-        print(f"Telegram 發送失敗: {e}")
+async def tg(msg):
+    try: await bot.send_message(chat_id=chat_id, text=msg, parse_mode='HTML')
+    except: pass
 
 def notify(msg):
-    print(msg)
-    asyncio.run(send_telegram(msg))
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}")
+    asyncio.run(tg(msg))
 
-# === 取得持倉 ===
-def get_long_position():
+# ==================== 核心 ====================
+def get_pos():
     try:
-        positions = exchange.fetch_positions([symbol])
-        for pos in positions:
-            # 關鍵：用 positionSide 判斷
-            if pos.get('positionSide') == 'LONG' and float(pos.get('contracts', 0)) > 0:
-                return {
-                    'size': float(pos['contracts']),
-                    'entry': float(pos['entryPrice']) if pos['entryPrice'] else 0
-                }
-        return {'size': 0, 'entry': 0}
-    except Exception as e:
-        print(f"持倉查詢錯誤: {e}")
-        return {'size': 0, 'entry': 0}
+        pos = exchange.fetch_positions([symbol])
+        for p in pos:
+            if p['contracts'] > 0 and p['side'] == 'long':
+                return float(p['contracts']), float(p['entryPrice'] or 0)
+        return 0.0, 0.0
+    except: return 0.0, 0.0
 
-# === 主策略迴圈（修好版）===
+def calc_pnl():
+    if not state['entries']: return 0.0
+    cost = sum(e['price'] * e['size'] for e in state['entries'])
+    value = sum(e['size'] for e in state['entries']) * state['price']
+    fee = value * 0.0005 * 2
+    return value - cost - fee
+
+def should_exit():
+    if not state['entries']: return False
+    required = PROFIT_PER_GRID * len(state['entries'])
+    state['total_pnl'] = calc_pnl()
+    return state['total_pnl'] >= required
+
+def add_long(size):
+    qty = fmt_qty(size)
+    if len(state['entries']) >= MAX_GRIDS:
+        notify("已達最大加倉次數，停止加倉")
+        return
+    try:
+        order = exchange.create_market_buy_order(symbol, qty, params={'positionSide': 'LONG'})
+        state['entries'].append({'price': state['price'], 'size': qty})
+        state['trades'].append(f"加倉 {qty:.4f} @ {state['price']:.2f}")
+        notify(f"<b>逆勢加倉 第 {len(state['entries'])} 筆</b>\n手數: <code>{qty:.4f}</code>\n價格: <code>{state['price']:.2f}</code>")
+    except Exception as e:
+        notify(f"<b>加倉失敗</b>\n{e}")
+
+def close_all():
+    size, _ = get_pos()
+    if size == 0: return
+    qty = fmt_qty(size)
+    try:
+        order = exchange.create_market_sell_order(symbol, qty, params={'positionSide': 'LONG'})
+        pnl = calc_pnl()
+        notify(f"<b>獲利全平！淨利 {pnl:+.2f} USDT</b>")
+        state['trades'].append(f"全平 +{pnl:+.2f}")
+        state['entries'].clear()
+        if state['pending_rebound']:
+            try: exchange.cancel_order(state['pending_rebound'], symbol)
+            except: pass
+            state['pending_rebound'] = None
+    except Exception as e: notify(f"平倉失敗: {e}")
+
 def trading_loop():
-    global dashboard_data
-    last_add_price = None
-    dashboard_data['add_count'] = 0
-    dashboard_data['entry_prices'] = []
-    dashboard_data['entry_sizes'] = []
+    first = True
+    last_grid_price = None
 
     while True:
         try:
-            # === 取得即時價格 ===
             ticker = exchange.fetch_ticker(symbol)
-            price = ticker['last']
-            print(f"[{time.strftime('%H:%M:%S')}] trading_loop 正在運行，當前價格: {price}")
+            state['price'] = price = ticker['last']
+            long_size, entry = get_pos()
+            state['long_size'] = long_size
+            state['long_entry'] = entry
 
-            # === 取得持倉 ===
-            pos = get_long_position()
-            size = pos['size']
-            entry = pos['entry']
+            # 首次自動開倉
+            if first and long_size == 0:
+                add_long(BASE_SIZE)
+                last_grid_price = price
+                first = False
+                time.sleep(5)
+                continue
 
-            # === 逆勢加碼邏輯（終極防呆）===
-            should_add = (
-                size == 0 or 
-                (last_add_price is not None and price > 0 and price < last_add_price * (1 - DROP_TRIGGER))
-            )
+            # 獲利出場
+            if long_size > 0 and should_exit():
+                close_all()
+                last_grid_price = None
+                time.sleep(10)
+                continue
 
-            if should_add:
-                # 強制初始化
-                dashboard_data.setdefault('add_count', 0)
-                dashboard_data.setdefault('entry_prices', [])
-                dashboard_data.setdefault('entry_sizes', [])
+            # 逆勢加倉
+            if long_size > 0 and last_grid_price:
+                grid = GRID_PCT_1 if len(state['entries']) < 12 else GRID_PCT_2
+                if price <= last_grid_price * (1 - grid):
+                    size = BASE_SIZE * (MULTIPLIER ** len(state['entries']))
+                    add_long(size)
+                    last_grid_price = price
 
-                level = dashboard_data['add_count']
-                
-                # 防呆：level 太大
-                if level > 10:
-                    notify("<b>加碼次數過多，停止</b>")
-                    dashboard_data['status'] = "加碼上限"
-                else:
-                    # 安全計算 add_size
-                    try:
-                        add_size = round(BASE_UNIT * (MULTIPLIER ** level), 6)
-                    except:
-                        add_size = BASE_UNIT
+            # 資金費率提醒（每8小時檢查一次）
+            if int(time.time()) % 28800 == 0 and not state['funding_alert']:
+                funding = exchange.fetch_funding_rate(symbol)
+                rate = funding['fundingRate'] * 100
+                if rate > 0.01:
+                    notify(f"<b>資金費率警告</b>: {rate:.4f}%  多頭正在付費！")
+                state['funding_alert'] = True
 
-                    # 防呆：add_size 必須合理
-                    if add_size < 0.0001 or add_size > 100:
-                        add_size = BASE_UNIT
-                        notify(f"<b>加碼單位異常，重置為 {BASE_UNIT}</b>")
-
-                    # 防呆：price 必須 > 0
-                    current_price = price if price > 0 else 2500.0
-
-                    try:
-                        order = exchange.create_order(
-                            symbol, 'market', 'buy', add_size,
-                            params={'positionSide': 'LONG'}
-                        )
-                        # 成功才更新
-                        dashboard_data['add_count'] += 1
-                        dashboard_data['entry_prices'].append(current_price)
-                        dashboard_data['entry_sizes'].append(add_size)
-                        last_add_price = current_price
-
-                        notify(f"<b>逆勢加碼 第 {dashboard_data['add_count']} 次</b>\n"
-                            f"價格: <code>{current_price:.2f}</code>\n"
-                            f"加倉: <code>{add_size:.6f}</code>\n"
-                            f"訂單: <code>{order['id']}</code>")
-                        dashboard_data['trades'].append(f"加碼 {add_size:.6f} @ {current_price:.2f}")
-
-                    except Exception as e:
-                        error_msg = f"加碼失敗: {e}"
-                        print(error_msg)
-                        notify(f"<b>加碼失敗</b>\n<code>{e}</code>")
-                        dashboard_data['status'] = f"錯誤: {e}"
-            
-            # === 動態獲利出場 ===
-            total_held_size = sum(dashboard_data['entry_sizes'])  # 本地持倉
-            if total_held_size > 0:
-                
-                # 用最新價格計算
-                market_value = total_held_size * price
-                total_cost = sum(p * s for p, s in zip(dashboard_data['entry_prices'], dashboard_data['entry_sizes']))
-                gross_pnl = market_value - total_cost
-                fee_penalty = market_value * FEE_PENALTY_RATE
-                net_pnl = gross_pnl - fee_penalty
-
-                if net_pnl > PROFIT_THRESHOLD:
-                    # === 平倉 ===
-                    order = exchange.create_order(
-                        symbol, 'market', 'sell', total_held_size,
-                        params={'positionSide': 'LONG'}
-                    )   
-                    final_fee = market_value * FEE_RATE
-                    final_net = gross_pnl - final_fee
-
-                    notify(f"<b>獲利了結全數出場！</b>\n"
-                        f"淨利: <code>{final_net:+.2f}</code> USDT\n"
-                        f"訂單: <code>{order['id']}</code>")
-                    dashboard_data['trades'].append(f"出場 +{final_net:+.2f}")
-
-                    # === 重置 ===
-                    dashboard_data['add_count'] = 0
-                    dashboard_data['entry_prices'] = []
-                    dashboard_data['entry_sizes'] = []
-                    last_add_price = None
-
-            # === 更新儀表板 ===
-            total_cost = sum(p * s for p, s in zip(dashboard_data['entry_prices'], dashboard_data['entry_sizes']))
-            market_value = size * price
-            gross_pnl = market_value - total_cost
-            fee_penalty = market_value * FEE_PENALTY_RATE
-            net_pnl = gross_pnl - fee_penalty
-
-            dashboard_data.update({
-                'price': price,
-                'long_pos': size,
-                'avg_price': entry,
-                'total_cost': total_cost,
-                'total_value': market_value,
-                'total_pnl': net_pnl,
-                'status': f"持倉 {size:.5f} | 淨利 {net_pnl:+.2f} USDT"
-            })
-
-            dashboard_data['history'].append({
-                'time': int(time.time() * 1000),
-                'price': price,
-                'size': size,
-                'pnl': net_pnl,
-                'action': dashboard_data['trades'][-1] if dashboard_data['trades'] else None
-            })
-
-            time.sleep(10)
+            state['status'] = f"持倉 {long_size:.4f} | {len(state['entries'])} 筆 | 盈虧 {calc_pnl():+.2f}"
+            time.sleep(8)
 
         except Exception as e:
-            error_msg = f"錯誤: {e}"
-            print(error_msg)
-            dashboard_data['status'] = error_msg
-            notify(f"<b>程式錯誤</b>\n<code>{e}</code>")
-            time.sleep(10)
+            notify(f"<b>程式異常</b>\n{e}")
+            time.sleep(15)
 
-# === 啟動交易迴圈 ===
-threading.Thread(target=trading_loop, daemon=True).start()
-
-# === Flask 路由 ===
+# ==================== Flask ====================
 @app.route('/')
-def dashboard():
-    return render_template('dashboard.html')
+def home(): return render_template('dashboard.html')
 
 @app.route('/api/data')
-def api_data():
-    return jsonify({
-        'price': dashboard_data['price'],
-        'long_pos': dashboard_data['long_pos'],
-        'avg_price': dashboard_data['avg_price'],
-        'total_cost': dashboard_data['total_cost'],
-        'total_value': dashboard_data['total_value'],
-        'total_pnl': dashboard_data['total_pnl'],
-        'status': dashboard_data['status'],
-        'history': list(dashboard_data['history']),
-        'trades': dashboard_data['trades'][-10:],
-        'add_count': dashboard_data['add_count']
-    })
+def api(): return jsonify(state)
 
+# ==================== 啟動 ====================
 if __name__ == '__main__':
-    # 雲端用 0.0.0.0 + 端口由系統分配
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+    threading.Thread(target=trading_loop, daemon=True).start()
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)

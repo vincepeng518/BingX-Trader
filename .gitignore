@@ -1,28 +1,5 @@
-# Python 虛擬環境
-.venv/
-venv/
-env/
-
-# Python 暫存檔
+.env
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-
-# VS Code 設定
-.vscode/
-
-# 環境變數檔（放 API Key）
-.env
-.env.local
-
-# Jupyter Notebook 檢查點
-.ipynb_checkpoints/
-
-# 日誌檔
-*.log
-
-# macOS 垃圾檔
 .DS_Store
-
-# Windows 縮圖
+venv/
