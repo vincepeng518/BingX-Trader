@@ -1,4 +1,4 @@
-# app.py - 2025 終極版 XAUT/USDT 馬丁機器人（Render 完美運行）
+# app.py - 2025 最終穩定版 XAUT 馬丁機器人（Render 完美運行）
 from flask import Flask, render_template, jsonify
 import ccxt
 import time
@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 強制讓 Render 找到 templates
+# Render 必須這樣寫才找得到 templates
 app = Flask(__name__, template_folder='templates')
 
 # ==================== BingX ====================
@@ -31,8 +31,8 @@ symbol = 'XAUT/USDT:USDT'
 # ==================== 參數 ====================
 BASE_SIZE = 0.0005                 # 首倉固定 0.0005 張
 MULTIPLIER = 1.33
-GRID_PCT_1 = 0.0005                # 0.05%
-GRID_PCT_2 = 0.0010                # 0.10%
+GRID_PCT_1 = 0.0005                # 前12筆 0.05%
+GRID_PCT_2 = 0.0010                # 第13筆起 0.10%
 PROFIT_PER_GRID = 0.05
 
 # ==================== 精度 ====================
@@ -63,7 +63,7 @@ last_grid_price = None
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-# ==================== Telegram 超穩發送 ====================
+# ==================== Telegram 穩定發送 ====================
 def send_tg(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return
@@ -134,7 +134,33 @@ def close_all():
     except Exception as e:
         notify(f"<b>平倉失敗</b>\n{e}")
 
-# ==================== 手動控制 ====================
+# ==================== 手動控制路由（正確分行版）===================
+@app.route('/tg/status')
+def tg_status():
+    text = get_status_text()
+    send_tg(text)
+    return "Status 已發送"
+
+@app.route('/tg/pause')
+def tg_pause():
+    global TRADING_ENABLED
+    TRADING_ENABLED = False
+    send_tg("交易已手動暫停")
+    return "Paused"
+
+@app.route('/tg/resume')
+def tg_resume():
+    global TRADING_ENABLED
+    TRADING_ENABLED = True
+    send_tg("交易已手動恢復")
+    return "Resumed"
+
+@app.route('/tg/close')
+def tg_close():
+    send_tg("強制全平執行中...")
+    threading.Thread(target=close_all, daemon=True).start()
+    return "Closing..."
+
 def get_status_text():
     sync_positions()
     pnl = calc_pnl()
@@ -153,11 +179,6 @@ def get_status_text():
     lines += ["", f"總手數: <code>{state['long_size']:.6f}</code>",
               f"平均: <code>{avg:.2f}</code>", f"盈虧: <code>{pnl:+.2f}</code>", f"回撤: <code>{drawdown:+.2f}%</code>"]
     return "\n".join(lines)
-
-@app.route('/tg/status')  def tg_status():  send_tg(get_status_text()); return "OK"
-@app.route('/tg/pause')   def tg_pause():   global TRADING_ENABLED; TRADING_ENABLED=False; send_tg("交易已暫停"); return "Paused"
-@app.route('/tg/resume')  def tg_resume():  global TRADING_ENABLED; TRADING_ENABLED=True;  send_tg("交易已恢復"); return "Resumed"
-@app.route('/tg/close')   def tg_close():   send_tg("強制全平中..."); threading.Thread(target=close_all, daemon=True).start(); return "Closing"
 
 # ==================== 主迴圈 ====================
 def trading_loop():
