@@ -8,6 +8,12 @@ import asyncio
 from telegram import Bot
 from dotenv import load_dotenv
 
+# ==================== 全域變數（必須放在最上面）===================
+TRADING_ENABLED = True       # Telegram 開關
+peak_price = 0.0              # 記錄波段最高價
+alert_sent = False            # 是否已發過大跌預警
+last_grid_price = None        # 加倉觸發基準價（修好版會自動設）
+
 load_dotenv()
 app = Flask(__name__)
 
@@ -20,7 +26,6 @@ exchange = ccxt.bingx({
 })
 exchange.set_sandbox_mode(os.getenv('SANDBOX', 'true').lower() == 'true')  # 設 false 就是實盤
 
-TRADING_ENABLED = True
 
 symbol = 'XAUT/USDT:USDT'
 BASE_SIZE = 0.0005
@@ -70,8 +75,6 @@ def fmt_price(p): return round(p - (p % TICK_SIZE), 8)
 def fmt_qty(q): return max(MIN_QTY, round(q - (q % LOT_SIZE), 6))
 
 # ==================== 狀態 ====================
-peak_price = 0.0           # 記錄當前波段最高價
-alert_sent = False         # 避免重複發送警告
 state = {
     'price': 0.0, 'long_size': 0.0, 'long_entry': 0.0,
     'entries': [], 'pending_rebound': None,
@@ -187,8 +190,6 @@ def trading_loop():
                 time.sleep(10)
                 continue
 
-            # 逆勢加倉
-            global peak_price, alert_sent
 
             # 更新波段最高價
             if state['price'] > peak_price:
